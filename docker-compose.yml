@@ -1,0 +1,45 @@
+services:
+  keep-image-saver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # キャッシュ効率化のためビルドターゲットを明示
+      target: runtime
+
+    image: keep-image-saver:latest
+
+    container_name: keep-image-saver
+
+    restart: unless-stopped
+
+    # 環境変数は .env ファイルから読み込む (.env.example を参照)
+    env_file:
+      - .env
+
+    environment:
+      # コンテナ内の Python stdout/stderr を UTF-8 に固定する (ログ文字化け対策)
+      PYTHONUTF8: "1"
+
+    volumes:
+      # .env をマウントすることでセットアップコマンドの書き込みがホストに反映される
+      - ./.env:/app/.env
+      # NAS の画像保存先をマウントする。
+      # Synology NAS の場合は左辺を実際のパスに変更する。
+      # 例: /volume1/images:/data/images
+      - ./data/images:/data/images
+
+    # ── リソース制限 ────────────────────────────────────────────────────────
+    deploy:
+      resources:
+        limits:
+          # Google Keep + Twitter API のポーリングは軽量なため低めに設定
+          memory: 256M
+        reservations:
+          memory: 64M
+
+    # ── ロギング設定 ─────────────────────────────────────────────────────────
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
