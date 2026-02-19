@@ -165,6 +165,38 @@ _INDEX_HTML = (
         Google 認証ページへ進む →
       </button>
     </form>
+
+    <hr class="my-4">
+
+    <!-- Cookie ファイル設定 -->
+    <h6 class="fw-bold">
+      Cookie ファイル設定
+      <span class="badge bg-secondary fw-normal ms-1">任意</span>
+    </h6>
+    <p class="small text-muted mb-3">
+      鍵アカウントなど認証が必要なツイートの画像も取得したい場合に設定します。<br>
+      ブラウザ拡張機能 <strong>Get cookies.txt LOCALLY</strong> などで
+      x.com のクッキーを書き出し、<code>data/</code> フォルダに配置してください。<br>
+      コンテナ内では <code>/data/</code> にマウントされているため、
+      例えば <code>data/x.com_cookies.txt</code> に置いたファイルは
+      <code>/data/x.com_cookies.txt</code> と指定します。
+    </p>
+
+    {% if cookies_saved %}
+    <div class="alert alert-success py-2 small">Cookie ファイルのパスを保存しました。</div>
+    {% endif %}
+
+    <form method="post" action="/save-cookies">
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Cookie ファイルのパス</label>
+        <input type="text" class="form-control font-monospace"
+               name="cookies_file"
+               placeholder="/data/x.com_cookies.txt"
+               value="{{ prefill.cookies_file }}">
+        <div class="form-text">空のまま保存すると設定を削除します。</div>
+      </div>
+      <button type="submit" class="btn btn-outline-primary">保存する</button>
+    </form>
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
@@ -224,6 +256,7 @@ def _current_status() -> dict[str, bool]:
         "GOOGLE_OAUTH_CLIENT_ID",
         "GOOGLE_OAUTH_CLIENT_SECRET",
         "GOOGLE_OAUTH_REFRESH_TOKEN",
+        "GALLERY_DL_COOKIES_FILE",
     ]
     return {k: bool(env.get(k)) for k in keys}
 
@@ -237,6 +270,7 @@ def _prefill_values() -> dict[str, str]:
         "client_id": env.get("GOOGLE_OAUTH_CLIENT_ID", ""),
         "client_secret": "",  # セキュリティのため表示しない
         "email": env.get("GOOGLE_EMAIL", ""),
+        "cookies_file": env.get("GALLERY_DL_COOKIES_FILE", ""),
     }
 
 
@@ -264,11 +298,13 @@ def _build_flow(client_id: str, client_secret: str, redirect_uri: str):
 @app.route("/")
 def index():
     error = request.args.get("error")
+    cookies_saved = request.args.get("cookies_saved") == "1"
     return render_template_string(
         _INDEX_HTML,
         status=_current_status(),
         prefill=_prefill_values(),
         error=error,
+        cookies_saved=cookies_saved,
     )
 
 
@@ -344,6 +380,13 @@ def callback():
     session.clear()
 
     return render_template_string(_SUCCESS_HTML)
+
+
+@app.route("/save-cookies", methods=["POST"])
+def save_cookies():
+    cookies_file = request.form.get("cookies_file", "").strip()
+    upsert_env_value("GALLERY_DL_COOKIES_FILE", cookies_file)
+    return redirect("/?cookies_saved=1")
 
 
 # ── エントリーポイント ─────────────────────────────────────────────────────────
