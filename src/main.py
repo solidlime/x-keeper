@@ -167,11 +167,27 @@ def main() -> None:
 
     # クライアントの初期化 (失敗したら即終了)
     try:
+        # 必須設定の検証
+        missing = [
+            name
+            for name, value in [
+                ("GOOGLE_EMAIL", settings.google_email),
+                ("GOOGLE_OAUTH_CLIENT_ID", settings.google_oauth_client_id),
+                ("GOOGLE_OAUTH_CLIENT_SECRET", settings.google_oauth_client_secret),
+                ("GOOGLE_OAUTH_REFRESH_TOKEN", settings.google_oauth_refresh_token),
+            ]
+            if not value
+        ]
+        if missing:
+            raise RuntimeError(
+                f"必須の設定が未設定です: {', '.join(missing)}\n"
+                "先に `docker compose --profile setup up setup` を実行して認証を完了してください。"
+            )
         keep = KeepClient(
-            settings.google_email or "",
-            settings.google_oauth_client_id or "",
-            settings.google_oauth_client_secret or "",
-            settings.google_oauth_refresh_token or "",
+            settings.google_email,  # type: ignore[arg-type]
+            settings.google_oauth_client_id,  # type: ignore[arg-type]
+            settings.google_oauth_client_secret,  # type: ignore[arg-type]
+            settings.google_oauth_refresh_token,  # type: ignore[arg-type]
         )
         twitter = TwitterClient(settings.gallery_dl_cookies_file)
         downloader = ImageDownloader(settings.save_path, settings.gallery_dl_cookies_file)
