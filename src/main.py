@@ -234,19 +234,30 @@ def main() -> None:
     # 必須設定が揃うまで待機する (未設定の場合はコンテナを落とさず待機)
     settings = _wait_for_required_settings(settings, logger)
 
-    # クライアントの初期化 (失敗したら即終了)
-    try:
-        keep = KeepClient(
-            settings.google_email,  # type: ignore[arg-type]
-            settings.google_oauth_client_id,  # type: ignore[arg-type]
-            settings.google_oauth_client_secret,  # type: ignore[arg-type]
-            settings.google_oauth_refresh_token,  # type: ignore[arg-type]
-        )
-        twitter = TwitterClient(settings.gallery_dl_cookies_file)
-        downloader = ImageDownloader(settings.save_path, settings.gallery_dl_cookies_file)
-    except RuntimeError as exc:
-        logger.critical("初期化に失敗しました: %s", exc)
-        sys.exit(1)
+    # クライアントの初期化 (認証情報が間違っている場合は .env 更新を待ってリトライ)
+    while True:
+        try:
+            keep = KeepClient(
+                settings.google_email,  # type: ignore[arg-type]
+                settings.google_oauth_client_id,  # type: ignore[arg-type]
+                settings.google_oauth_client_secret,  # type: ignore[arg-type]
+                settings.google_oauth_refresh_token,  # type: ignore[arg-type]
+            )
+            twitter = TwitterClient(settings.gallery_dl_cookies_file)
+            downloader = ImageDownloader(settings.save_path, settings.gallery_dl_cookies_file)
+            break
+        except RuntimeError as exc:
+            logger.critical(
+                "初期化に失敗しました: %s — "
+                "認証情報が間違っている可能性があります。"
+                "セットアップ画面 (http://localhost:8080) で修正してください。"
+                "(起動: docker compose --profile setup up setup) "
+                "%d 秒後に再試行します。",
+                exc,
+                _REQUIRED_SETTINGS_CHECK_INTERVAL,
+            )
+            time.sleep(_REQUIRED_SETTINGS_CHECK_INTERVAL)
+            settings = Settings()  # type: ignore[call-arg]  # .env を再読み込み
 
     logger.info(
         "ポーリングループを開始します (間隔: %d 秒)", settings.poll_interval_seconds
