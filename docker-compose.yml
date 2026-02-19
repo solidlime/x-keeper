@@ -52,13 +52,8 @@ services:
 
   # ── Web セットアップサーバー ──────────────────────────────────────────────
   # Google OAuth2 認証情報をブラウザ経由で設定するためのサービス。
-  # 通常運用では不要なため profiles: [setup] で分離している。
-  #
-  # 起動コマンド:
-  #   docker compose --profile setup up setup
+  # メインサービスと並行して常時起動する。
   # ブラウザで http://localhost:8080 を開いてセットアップを進める。
-  # 認証完了後に Ctrl+C でこのサービスを停止し、通常コンテナを起動する:
-  #   docker compose up -d
   setup:
     build:
       context: .
@@ -71,8 +66,7 @@ services:
 
     command: ["python", "-m", "src.web_setup"]
 
-    profiles:
-      - setup
+    restart: unless-stopped
 
     ports:
       - "8080:8080"

@@ -192,8 +192,7 @@ def _wait_for_required_settings(settings: Settings, logger: logging.Logger) -> S
 
     logger.warning(
         "必須の設定が未設定のため待機します: %s — "
-        "ブラウザで http://localhost:8080 を開いてセットアップを完了してください "
-        "(起動コマンド: docker compose --profile setup up setup)",
+        "ブラウザで http://localhost:8080 を開いてセットアップを完了してください。",
         ", ".join(missing),
     )
     while True:
@@ -251,7 +250,6 @@ def main() -> None:
                 "初期化に失敗しました: %s — "
                 "認証情報が間違っている可能性があります。"
                 "セットアップ画面 (http://localhost:8080) で修正してください。"
-                "(起動: docker compose --profile setup up setup) "
                 "%d 秒後に再試行します。",
                 exc,
                 _REQUIRED_SETTINGS_CHECK_INTERVAL,
