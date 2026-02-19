@@ -11,7 +11,6 @@ from .config import Settings
 from .image_downloader import ImageDownloader
 from .keep_client import KeepClient
 from .models import ProcessResult
-from .token_setup import ensure_token_available
 from .twitter_client import TwitterClient
 
 
@@ -159,15 +158,6 @@ def main() -> None:
 
     logger = logging.getLogger(__name__)
     logger.info("keep-image-saver を起動します")
-
-    # 認証情報の確認: 未設定の場合はブラウザ OAuth2 セットアップを実行する
-    ensure_token_available(
-        settings.google_oauth_client_id,
-        settings.google_oauth_client_secret,
-        settings.google_oauth_refresh_token,
-    )
-    # セットアップ完了後は .env が更新されているので設定を再読み込みする
-    settings = Settings()  # type: ignore[call-arg]
 
     logger.info(
         "設定: poll_interval=%ds, save_path=%s",
