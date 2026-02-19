@@ -43,3 +43,45 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # ── Web セットアップサーバー ──────────────────────────────────────────────
+  # Google OAuth2 認証情報をブラウザ経由で設定するためのサービス。
+  # 通常運用では不要なため profiles: [setup] で分離している。
+  #
+  # 起動コマンド:
+  #   docker compose --profile setup up setup
+  # ブラウザで http://localhost:8080 を開いてセットアップを進める。
+  # 認証完了後に Ctrl+C でこのサービスを停止し、通常コンテナを起動する:
+  #   docker compose up -d
+  setup:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+
+    image: keep-image-saver:latest
+
+    container_name: keep-image-saver-setup
+
+    command: ["python", "-m", "src.web_setup"]
+
+    profiles:
+      - setup
+
+    ports:
+      - "8080:8080"
+
+    environment:
+      PYTHONUTF8: "1"
+      # ローカル HTTP での OAuth2 フローを許可 (セットアップ専用サービスのみ)
+      OAUTHLIB_INSECURE_TRANSPORT: "1"
+
+    volumes:
+      # .env をマウントして書き込み結果をホストに反映する
+      - ./.env:/app/.env
+
+    # リソース制限 (セットアップ専用なので最小限)
+    deploy:
+      resources:
+        limits:
+          memory: 128M
