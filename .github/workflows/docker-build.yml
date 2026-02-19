@@ -30,6 +30,9 @@ jobs:
       - name: リポジトリをチェックアウト
         uses: actions/checkout@v4
 
+      - name: QEMUをセットアップ（マルチプラットフォームビルド用）
+        uses: docker/setup-qemu-action@v3
+
       - name: Docker Buildxをセットアップ
         uses: docker/setup-buildx-action@v3
 
