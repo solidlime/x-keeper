@@ -21,7 +21,7 @@ os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
 
 from flask import Flask, redirect, render_template_string, request, session, url_for
 
-from src.token_setup import _ENV_FILE, _load_client_credentials, upsert_env_value
+from src.token_setup import _ENV_FILE, upsert_env_value
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(32)
@@ -48,7 +48,7 @@ _BASE_STYLE = """
         crossorigin="anonymous">
   <style>
     body { background: #f8f9fa; }
-    .card { max-width: 600px; margin: 60px auto; border-radius: 12px; }
+    .card { max-width: 680px; margin: 60px auto; border-radius: 12px; }
     .badge-set   { background-color: #198754; }
     .badge-unset { background-color: #dc3545; }
   </style>
@@ -79,15 +79,60 @@ _INDEX_HTML = (
       {% endfor %}
     </ul>
 
+    <!-- 取得手順ガイド -->
+    <h6 class="fw-bold">Client ID / Client Secret の取得方法</h6>
+    <div class="accordion mb-4" id="guideAccordion">
+      <div class="accordion-item">
+        <h2 class="accordion-header">
+          <button class="accordion-button collapsed" type="button"
+                  data-bs-toggle="collapse" data-bs-target="#guideSteps">
+            Google Cloud Console での作成手順を見る
+          </button>
+        </h2>
+        <div id="guideSteps" class="accordion-collapse collapse">
+          <div class="accordion-body small">
+            <ol class="mb-0 ps-3">
+              <li class="mb-2">
+                <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">
+                  Google Cloud Console
+                </a>
+                を開き、画面上部のプロジェクト選択メニューから
+                <strong>「新しいプロジェクト」</strong> を作成するか、既存のプロジェクトを選択します。
+              </li>
+              <li class="mb-2">
+                左メニューから <strong>「APIとサービス」→「OAuth 同意画面」</strong> を開きます。<br>
+                User Type は <strong>「外部」</strong> を選択して「作成」をクリックします。<br>
+                アプリ名・サポートメールを入力して「保存して次へ」を繰り返し、最後に「ダッシュボードに戻る」をクリックします。<br>
+                <span class="text-muted">※ スコープの追加・テストユーザーの登録は不要です。</span>
+              </li>
+              <li class="mb-2">
+                左メニューから <strong>「APIとサービス」→「認証情報」</strong> を開きます。
+              </li>
+              <li class="mb-2">
+                画面上部の <strong>「+ 認証情報を作成」→「OAuth クライアント ID」</strong> をクリックします。
+              </li>
+              <li class="mb-2">
+                アプリケーションの種類で <strong>「デスクトップアプリ」</strong> を選択し、
+                任意の名前（例: <code>x-keeper</code>）を入力して <strong>「作成」</strong> をクリックします。
+              </li>
+              <li class="mb-2">
+                ダイアログに表示される <strong>クライアント ID</strong> と
+                <strong>クライアント シークレット</strong> をコピーして、
+                下のフォームに貼り付けます。<br>
+                <span class="text-muted">
+                  ※ ダイアログを閉じた後は認証情報一覧の
+                  <strong>「編集」（鉛筆アイコン）</strong>
+                  から再確認できます。
+                </span>
+              </li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- セットアップフォーム -->
     <h6 class="fw-bold">認証情報を入力</h6>
-    <p class="text-muted small mb-3">
-      <a href="https://console.cloud.google.com/apis/credentials" target="_blank">
-        Google Cloud Console
-      </a>
-      で「OAuth2 クライアント ID（デスクトップアプリ）」を作成し、
-      Client ID と Client Secret を貼り付けてください。
-    </p>
 
     {% if error %}
     <div class="alert alert-danger">{{ error }}</div>
@@ -122,6 +167,9 @@ _INDEX_HTML = (
     </form>
   </div>
 </div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc4s9bIOgUxi8T/jzmk8HVZc7n6P91hnnASVGMNQOos"
+        crossorigin="anonymous"></script>
 </body></html>
 """
 )
