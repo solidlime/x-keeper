@@ -10,3 +10,7 @@ gallery-dl==1.27.4
 # 設定管理 (pydantic v2 ベース)
 pydantic-settings==2.3.4
 pydantic==2.8.2
+
+# Web セットアップサーバー (Google OAuth2 認証情報を Web UI で設定するために使用)
+flask>=3.0.0
+python-dotenv>=1.0.0
