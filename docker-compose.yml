@@ -23,10 +23,10 @@ services:
     volumes:
       # .env をマウントすることでセットアップコマンドの書き込みがホストに反映される
       - ./.env:/app/.env
-      # NAS の画像保存先をマウントする。
-      # Synology NAS の場合は左辺を実際のパスに変更する。
-      # 例: /volume1/images:/data/images
-      - ./data/images:/data/images
+      # data ディレクトリ全体をマウント（認証ファイル・Cookie・画像）
+      # NAS の画像保存先をマウントする場合は、適宜パスを変更する。
+      # 例: Synology NAS の場合は左辺を /volume1/data に変更
+      - ./data:/data
 
     # ── リソース制限 ────────────────────────────────────────────────────────
     deploy:

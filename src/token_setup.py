@@ -94,6 +94,7 @@ def _load_client_credentials() -> tuple[str, str]:
     else:
         secrets_file = _ENV_FILE.parent / "client_secrets.json"
 
+
     if secrets_file.exists():
         data = json.loads(secrets_file.read_text(encoding="utf-8"))
         info: dict | None = data.get("installed") or data.get("web")
@@ -122,7 +123,7 @@ def _load_client_credentials() -> tuple[str, str]:
         "   - 任意の場所に配置して .env に GOOGLE_CLIENT_SECRETS_FILE=パス を設定\n"
         "   または .env に以下を追加:\n"
         "     GOOGLE_OAUTH_CLIENT_ID=your-client-id\n"
-        "     GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret\n"
+        "     GOOGLE_OAUTH_CLIENT_SECRET=your-client-service\n"
     )
 
 

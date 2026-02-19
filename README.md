@@ -49,40 +49,37 @@ POLL_INTERVAL_SECONDS=300
 鍵垢のツイートにもアクセスしたい場合は Cookie ファイルを追加する:
 
 ```dotenv
-GALLERY_DL_COOKIES_FILE=/data/cookies.txt
+GALLERY_DL_COOKIES_FILE=./data/x.com_cookies.txt
 ```
 
-Cookie ファイルの取得: ブラウザ拡張 [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) などで Netscape 形式でエクスポートし、`docker-compose.yml` でボリュームにマウントする。
-
-
+Cookie ファイルの取得: ブラウザ拡張 [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) などで Netscape 形式でエクスポートし、`data/` ディレクトリに `x.com_cookies.txt` という名前で保存する。
 
 ---
 
-### 2. Google master token のセットアップ
+### 2. Google OAuth2 認証のセットアップ
 
-初回のみ、対話セットアップコマンドを実行する。
-メールアドレスとパスワード（または **アプリパスワード**）を入力すると token が自動取得されて `.env` に書き込まれる。
+#### 2-1. Google Cloud Console でプロジェクトを作成
+
+1. [Google Cloud Console](https://console.cloud.google.com/) にアクセス
+2. プロジェクトを作成（または既存プロジェクトを選択）
+3. 「APIとサービス > 認証情報」を開く
+4. 「認証情報を作成 > OAuth クライアント ID」を選択
+5. アプリケーションの種類: **デスクトップアプリ**
+6. 作成後、JSON をダウンロードして **`data/client_secrets.json`** という名前で保存
+
+> **注意**: API ライブラリで Keep API を有効化する必要はありません。
+> memento/reminders スコープは一般 Google アカウントの内部スコープです。
+
+#### 2-2. リフレッシュトークンの取得
+
+初回のみ、対話セットアップコマンドを実行してブラウザで認証を行う。
+リフレッシュトークンが自動取得されて `.env` に書き込まれる。
 
 ```bash
 docker compose run --rm -it keep-image-saver python -m src.token_setup
 ```
 
-```
-==================================================
- Google Keep セットアップ
-==================================================
-.env に GOOGLE_MASTER_TOKEN が設定されていません。
-Google アカウント情報を入力してください。
-
-メールアドレス: your-email@gmail.com
-パスワード: ********
-
-Google に接続中...
-トークンを取得しました。.env に保存しました。
-==================================================
-```
-
-> **2段階認証を有効にしている場合**: Google アカウント → セキュリティ → アプリパスワード で発行したアプリパスワードを入力する
+ブラウザが開くので、Google アカウントでログインして権限を許可する。
 
 ---
 
@@ -109,14 +106,16 @@ docker compose logs -f
 
 ```yaml
 volumes:
-  - /volume1/images:/data/images
+  - ./.env:/app/.env
+  # data ディレクトリを NAS のパスにマウント
+  - /volume1/data:/data
 ```
 
 ### Container Manager を使う場合
 
 1. Container Manager を開く
 2. **プロジェクト** → **作成** → フォルダを指定して `docker-compose.yml` をアップロード
-3. `.env` ファイルを同じフォルダに配置
+3. `.env` ファイルと `data/client_secrets.json` を同じフォルダに配置
 4. プロジェクトを起動
 
 ---
@@ -131,13 +130,17 @@ keep-image-saver/
 │   ├── keep_client.py      # Google Keep クライアント
 │   ├── twitter_client.py   # X (Twitter) API クライアント
 │   ├── image_downloader.py # 画像ダウンロード・保存
+│   ├── token_setup.py      # Google OAuth2 認証セットアップ
 │   └── main.py             # ポーリングループ（エントリーポイント）
 ├── data/
+│   ├── client_secrets.json # Google OAuth2 クライアントシークレット（要配置）
+│   ├── x.com_cookies.txt   # X (Twitter) Cookie ファイル（オプション）
 │   └── images/             # 保存先（Docker ボリュームでマウント）
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
-└── .env.example
+├── .env.example
+└── .env                    # 設定ファイル（要作成）
 ```
 
 ---
@@ -147,7 +150,9 @@ keep-image-saver/
 | 環境変数 | 必須 | デフォルト | 説明 |
 |---|---|---|---|
 | `GOOGLE_EMAIL` | ✅ | — | Google アカウントのメールアドレス |
-| `GOOGLE_MASTER_TOKEN` | ✅ | — | Google master token |
+| `GOOGLE_OAUTH_CLIENT_ID` | | — | Google OAuth2 クライアント ID（client_secrets.json があれば不要） |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | | — | Google OAuth2 クライアントシークレット（client_secrets.json があれば不要） |
+| `GOOGLE_OAUTH_REFRESH_TOKEN` | ✅ | — | Google OAuth2 リフレッシュトークン（token_setup で自動取得） |
 | `GALLERY_DL_COOKIES_FILE` | | `None` | gallery-dl の Cookie ファイルパス（鍵垢対応時のみ） |
 | `SAVE_PATH` | | `/data/images` | 画像保存先ルートディレクトリ |
 | `POLL_INTERVAL_SECONDS` | | `60` | Keep の確認間隔（秒） |

@@ -41,12 +41,16 @@ Thumbs.db
 # 環境変数とシークレット
 .env
 .env.local
-client_secrets.json
 token.pickle
 
-# データディレクトリ（画像とCookie）
+# 認証ファイル（dataディレクトリ内を含む）
+client_secrets.json
+data/client_secrets.json
+x.com_cookies.txt
+data/x.com_cookies.txt
+
+# データディレクトリ（画像）
 data/images/
-data/*.txt
 
 # ログファイル
 *.log
