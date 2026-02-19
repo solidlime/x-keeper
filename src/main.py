@@ -144,6 +144,72 @@ def run_once(
     return results
 
 
+_REQUIRED_SETTINGS_CHECK_INTERVAL = 30
+"""必須設定が揃っているか確認する間隔 (秒)。"""
+
+_REQUIRED_SETTING_KEYS = [
+    "GOOGLE_EMAIL",
+    "GOOGLE_OAUTH_CLIENT_ID",
+    "GOOGLE_OAUTH_CLIENT_SECRET",
+    "GOOGLE_OAUTH_REFRESH_TOKEN",
+]
+
+
+def _missing_settings(settings: Settings) -> list[str]:
+    """未設定の必須項目名リストを返す。全て設定済みなら空リスト。"""
+    return [
+        name
+        for name, value in zip(
+            _REQUIRED_SETTING_KEYS,
+            [
+                settings.google_email,
+                settings.google_oauth_client_id,
+                settings.google_oauth_client_secret,
+                settings.google_oauth_refresh_token,
+            ],
+        )
+        if not value
+    ]
+
+
+def _wait_for_required_settings(settings: Settings, logger: logging.Logger) -> Settings:
+    """必須設定が揃うまで .env を再読み込みしながら待機する。
+
+    リフレッシュトークン等の認証情報が未設定の場合、コンテナを落とさずに
+    30 秒ごとに .env を再チェックする。セットアップサービス経由で
+    .env が更新されたタイミングで自動的に次のステップへ進む。
+
+    Args:
+        settings: 起動時に読み込んだ Settings インスタンス。
+        logger: ロガー。
+
+    Returns:
+        必須設定が揃った Settings インスタンス。
+    """
+    missing = _missing_settings(settings)
+    if not missing:
+        return settings
+
+    logger.warning(
+        "必須の設定が未設定のため待機します: %s — "
+        "ブラウザで http://localhost:8080 を開いてセットアップを完了してください "
+        "(起動コマンド: docker compose --profile setup up setup)",
+        ", ".join(missing),
+    )
+    while True:
+        time.sleep(_REQUIRED_SETTINGS_CHECK_INTERVAL)
+        settings = Settings()  # type: ignore[call-arg]
+        missing = _missing_settings(settings)
+        if not missing:
+            logger.info("必須設定が揃いました。起動を続行します。")
+            return settings
+        logger.warning(
+            "まだ未設定の項目があります: %s — 引き続き待機中 (次回確認まで %d 秒)",
+            ", ".join(missing),
+            _REQUIRED_SETTINGS_CHECK_INTERVAL,
+        )
+
+
 def main() -> None:
     """アプリケーションのエントリーポイント。設定を読み込んでポーリングループを開始する。
 
@@ -165,13 +231,16 @@ def main() -> None:
         settings.save_path,
     )
 
+    # 必須設定が揃うまで待機する (未設定の場合はコンテナを落とさず待機)
+    settings = _wait_for_required_settings(settings, logger)
+
     # クライアントの初期化 (失敗したら即終了)
     try:
         keep = KeepClient(
-            settings.google_email or "",
-            settings.google_oauth_client_id or "",
-            settings.google_oauth_client_secret or "",
-            settings.google_oauth_refresh_token or "",
+            settings.google_email,  # type: ignore[arg-type]
+            settings.google_oauth_client_id,  # type: ignore[arg-type]
+            settings.google_oauth_client_secret,  # type: ignore[arg-type]
+            settings.google_oauth_refresh_token,  # type: ignore[arg-type]
         )
         twitter = TwitterClient(settings.gallery_dl_cookies_file)
         downloader = ImageDownloader(settings.save_path, settings.gallery_dl_cookies_file)
