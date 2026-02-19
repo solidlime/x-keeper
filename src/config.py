@@ -55,6 +55,14 @@ class Settings(BaseSettings):
     poll_interval_seconds: int = 60
     """Google Keep の確認間隔 (秒)。"""
 
+    # ── OAuth2 コールバックサーバ ─────────────────────────────────────────────
+    oauth_callback_port: int = 8989
+    """OAuth2 認証フローで使うコールバック HTTP サーバのポート番号。
+
+    docker-compose.yml のポートマッピングおよびホスト側のブラウザアクセス先と
+    一致させること。デフォルト: 8989
+    """
+
     # ── ロギング ──────────────────────────────────────────────────────────────
     log_level: str = "INFO"
     """ログレベル。DEBUG / INFO / WARNING / ERROR のいずれか。"""

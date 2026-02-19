@@ -127,8 +127,14 @@ def _load_client_credentials() -> tuple[str, str]:
     )
 
 
-def run_interactive_setup() -> None:
-    """ブラウザを開いて OAuth2 認証を実行し、リフレッシュトークンを .env に保存する。
+def run_interactive_setup(port: int = 8989) -> None:
+    """OAuth2 認証を実行し、リフレッシュトークンを .env に保存する。
+
+    コンテナ内ではブラウザを自動起動せず、0.0.0.0 にバインドすることで
+    ホストのブラウザから http://localhost:<port> 経由でアクセスできる。
+
+    Args:
+        port: コールバック HTTP サーバが使用するポート番号。
 
     Raises:
         RuntimeError: 認証情報が見つからない、または認証フローが失敗した場合。
@@ -163,13 +169,28 @@ def run_interactive_setup() -> None:
     print("=" * 60)
     print(" Google Keep OAuth2 認証")
     print("=" * 60)
-    print("ブラウザが開きます。Google アカウントでログインして")
-    print("アクセスを許可してください。")
+    print(f"認証サーバをポート {port} で起動します。")
+    print("以下の手順で認証を完了してください:")
+    print()
+    print("  1. 下に表示される Google 認証 URL をブラウザで開く")
+    print(f"  2. Google アカウントでログインしてアクセスを許可する")
+    print(f"  3. ブラウザが http://localhost:{port}/ へリダイレクトされ")
+    print(f"     「認証成功」と表示されたら完了")
+    print()
+    print("  ※ Docker 経由の場合はホスト側のブラウザで上記を実行してください")
+    print("=" * 60)
     print()
 
     flow = InstalledAppFlow.from_client_config(client_config, scopes=scopes)
-    # port=0 で空きポートを自動選択、open_browser=True でブラウザを自動起動
-    creds = flow.run_local_server(port=0, open_browser=True)
+    # bind_addr=0.0.0.0 でコンテナ外からアクセス可能にする
+    # host=localhost はリダイレクト URI に使用 (ホストブラウザが解決できる必要がある)
+    # open_browser=False: コンテナ内にブラウザがないため手動アクセス
+    creds = flow.run_local_server(
+        host="localhost",
+        bind_addr="0.0.0.0",
+        port=port,
+        open_browser=False,
+    )
 
     # リフレッシュトークンと認証情報を .env に保存する
     upsert_env_value("GOOGLE_OAUTH_CLIENT_ID", client_id)
@@ -186,19 +207,20 @@ def ensure_token_available(
     client_id: str | None,
     client_secret: str | None,
     refresh_token: str | None,
+    port: int = 8989,
 ) -> None:
-    """OAuth2 リフレッシュトークンが未設定の場合にブラウザ認証フローを実行する。
+    """OAuth2 リフレッシュトークンが未設定の場合に認証フローを実行する。
 
     既に client_id / client_secret / refresh_token が全て設定済みの場合は何もしない。
-    TTY が利用できない環境 (Docker daemon など) では手順を表示してプロセスを終了する。
+    TTY の有無にかかわらず認証サーバを起動し、ホスト側ブラウザからアクセスできる。
 
     Args:
         client_id: Google OAuth2 クライアント ID。
         client_secret: Google OAuth2 クライアントシークレット。
         refresh_token: Google OAuth2 リフレッシュトークン。
+        port: コールバック HTTP サーバが使用するポート番号。
 
     Raises:
-        SystemExit: TTY がなく対話セットアップを実行できない場合。
         RuntimeError: 認証情報の取得に失敗した場合。
     """
     if client_id and client_secret and refresh_token:
@@ -206,21 +228,18 @@ def ensure_token_available(
 
     if not sys.stdin.isatty():
         print(
-            "[ERROR] Google OAuth2 認証情報が未設定です。\n"
-            "\n"
-            "次のコマンドでセットアップを実行してください:\n"
-            "\n"
-            "  docker compose run --rm -it keep-image-saver python -m src.token_setup\n"
-            "\n"
-            "セットアップ後に再度コンテナを起動してください。",
+            f"[INFO] Google OAuth2 認証情報が未設定です。\n"
+            f"認証サーバをポート {port} で起動します。\n"
+            f"ホスト側ブラウザで下に表示される URL を開いて認証を完了してください。",
             file=sys.stderr,
         )
-        sys.exit(1)
 
-    run_interactive_setup()
+    run_interactive_setup(port=port)
 
 
 if __name__ == "__main__":
+    import os
+
     # stdin / stdout / stderr を UTF-8 に設定する（Windows 文字化け対策）
     if hasattr(sys.stdin, "reconfigure"):
         sys.stdin.reconfigure(encoding="utf-8")
@@ -229,8 +248,10 @@ if __name__ == "__main__":
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
+    _port = int(os.environ.get("OAUTH_CALLBACK_PORT", "8989"))
+
     try:
-        ensure_token_available(None, None, None)
+        ensure_token_available(None, None, None, port=_port)
         print("セットアップが完了しました。")
         print("次のコマンドでコンテナを起動してください: docker compose up -d")
     except RuntimeError as exc:

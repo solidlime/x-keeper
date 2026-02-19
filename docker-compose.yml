@@ -20,6 +20,12 @@ services:
       # コンテナ内の Python stdout/stderr を UTF-8 に固定する (ログ文字化け対策)
       PYTHONUTF8: "1"
 
+    # OAuth2 認証フロー用コールバックサーバのポート
+    # 初回セットアップ時のみ使用。認証完了後は不要 (ただし常時公開しておいて問題ない)
+    # OAUTH_CALLBACK_PORT を変更した場合はホスト側ポートも連動して変わる
+    ports:
+      - "${OAUTH_CALLBACK_PORT:-8989}:${OAUTH_CALLBACK_PORT:-8989}"
+
     volumes:
       # .env をマウントすることでセットアップコマンドの書き込みがホストに反映される
       - ./.env:/app/.env
