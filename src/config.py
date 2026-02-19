@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     未設定の場合は起動時の対話セットアップで入力を促す。
     """
 
+    google_client_secrets_file: str | None = None
+    """Google OAuth2 client_secrets.json のファイルパス。
+
+    未設定の場合はプロジェクトルートの client_secrets.json を探す。
+    絶対パスまたは実行ディレクトリからの相対パスで指定する。
+    """
+
     google_oauth_client_id: str | None = None
     """Google OAuth2 クライアント ID。Google Cloud Console から取得する。"""
 

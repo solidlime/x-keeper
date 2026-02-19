@@ -11,7 +11,9 @@ Google OAuth2 認証セットアップユーティリティ。
    ※ ライブラリで API を有効化する必要はない
      (memento/reminders スコープは一般 Google アカウントの内部スコープであり
       Cloud Console のライブラリには存在しない)
-3. client_secrets.json をダウンロードしてプロジェクトルートに配置
+3. client_secrets.json をダウンロードして以下のいずれかを実施:
+     - プロジェクトルートに配置 (デフォルト)
+     - 任意の場所に配置して .env に GOOGLE_CLIENT_SECRETS_FILE=パス を設定
    または .env に GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET を設定
 
 単独実行:
@@ -68,7 +70,9 @@ def _load_client_credentials() -> tuple[str, str]:
     """client_id と client_secret を解決する。
 
     優先順位:
-      1. client_secrets.json (Google Cloud Console からダウンロードしたファイル)
+      1. client_secrets.json
+         - GOOGLE_CLIENT_SECRETS_FILE 環境変数で指定したパス
+         - 未指定の場合はプロジェクトルートの client_secrets.json
       2. .env の GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET
 
     Returns:
@@ -77,22 +81,30 @@ def _load_client_credentials() -> tuple[str, str]:
     Raises:
         RuntimeError: 認証情報が見つからない、または形式が不正な場合。
     """
-    secrets_file = _ENV_FILE.parent / "client_secrets.json"
+    import os
+
+    from dotenv import load_dotenv
+
+    load_dotenv(_ENV_FILE)
+
+    # ファイルパスの解決: 環境変数 GOOGLE_CLIENT_SECRETS_FILE > デフォルト位置
+    secrets_file_env = os.getenv("GOOGLE_CLIENT_SECRETS_FILE")
+    if secrets_file_env:
+        secrets_file = Path(secrets_file_env)
+    else:
+        secrets_file = _ENV_FILE.parent / "client_secrets.json"
+
     if secrets_file.exists():
         data = json.loads(secrets_file.read_text(encoding="utf-8"))
         info: dict | None = data.get("installed") or data.get("web")
         if info is None:
             raise RuntimeError(
-                "client_secrets.json の形式が不正です: "
+                f"{secrets_file} の形式が不正です: "
                 "'installed' または 'web' キーが必要です。"
             )
         return info["client_id"], info["client_secret"]
 
     # .env から直接読む
-    import os
-
-    from dotenv import load_dotenv
-    load_dotenv(_ENV_FILE)
     client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
     client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
     if client_id and client_secret:
@@ -105,7 +117,9 @@ def _load_client_credentials() -> tuple[str, str]:
         "2. 「APIとサービス > 認証情報 > OAuth2クライアントID」を作成\n"
         "     アプリケーションの種類: デスクトップアプリ\n"
         "   ※ ライブラリで API を有効化する手順は不要\n"
-        f"3. client_secrets.json をダウンロードして {_ENV_FILE.parent.resolve()} に配置\n"
+        "3. client_secrets.json をダウンロードして以下のいずれかを実施:\n"
+        f"   - {_ENV_FILE.parent.resolve()} に配置 (デフォルト)\n"
+        "   - 任意の場所に配置して .env に GOOGLE_CLIENT_SECRETS_FILE=パス を設定\n"
         "   または .env に以下を追加:\n"
         "     GOOGLE_OAUTH_CLIENT_ID=your-client-id\n"
         "     GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret\n"
