@@ -26,7 +26,7 @@ from src.token_setup import _ENV_FILE, upsert_env_value
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(32)
 
-_PORT = int(os.getenv("WEB_SETUP_PORT", "8080"))
+_PORT = int(os.getenv("WEB_SETUP_PORT", "8989"))
 
 _SCOPES = [
     "https://www.googleapis.com/auth/memento",

@@ -192,8 +192,9 @@ def _wait_for_required_settings(settings: Settings, logger: logging.Logger) -> S
 
     logger.warning(
         "必須の設定が未設定のため待機します: %s — "
-        "ブラウザで http://localhost:8080 を開いてセットアップを完了してください。",
+        "ブラウザで http://localhost:%d を開いてセットアップを完了してください。",
         ", ".join(missing),
+        settings.web_setup_port,
     )
     while True:
         time.sleep(_REQUIRED_SETTINGS_CHECK_INTERVAL)
@@ -249,9 +250,10 @@ def main() -> None:
             logger.critical(
                 "初期化に失敗しました: %s — "
                 "認証情報が間違っている可能性があります。"
-                "セットアップ画面 (http://localhost:8080) で修正してください。"
+                "セットアップ画面 (http://localhost:%d) で修正してください。"
                 "%d 秒後に再試行します。",
                 exc,
+                settings.web_setup_port,
                 _REQUIRED_SETTINGS_CHECK_INTERVAL,
             )
             time.sleep(_REQUIRED_SETTINGS_CHECK_INTERVAL)
