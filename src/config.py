@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     鍵垢など認証が必要なツイートにアクセスするときだけ設定する。
     """
 
+    pixiv_refresh_token: str | None = None
+    """Pixiv の OAuth リフレッシュトークン。
+
+    `gallery-dl oauth:pixiv` または
+    `docker exec -it x-keeper gallery-dl oauth:pixiv` で取得する。
+    """
+
     # ── 保存先 ───────────────────────────────────────────────────────────────
     save_path: str = "./data"
     """画像の保存先ルートディレクトリ。日付サブフォルダが自動作成される。"""

@@ -31,7 +31,7 @@ class MediaDownloader:
     X/Twitter と Pixiv に対応。ファイル名生成・最高解像度選択・リトライは gallery-dl に任せる。
     """
 
-    def __init__(self, save_root: str, cookies_file: str | None) -> None:
+    def __init__(self, save_root: str, cookies_file: str | None, pixiv_refresh_token: str | None = None) -> None:
         """初期化する。
 
         Args:
@@ -45,6 +45,7 @@ class MediaDownloader:
         """
         self._save_root = Path(save_root)
         self._cookies_file = cookies_file
+        self._pixiv_refresh_token = pixiv_refresh_token
         logger.info(
             "MediaDownloader を初期化しました: save_root=%s", save_root
         )
@@ -146,6 +147,8 @@ class MediaDownloader:
             cmd += ["--cookies", self._cookies_file]
             # cookies あり = ログイン済み → conversations=true でスレッド全体を一括取得する
             cmd += ["--option", "extractor.twitter.conversations=true"]
+        if self._pixiv_refresh_token:
+            cmd += ["-o", f"pixiv.refresh-token={self._pixiv_refresh_token}"]
 
         logger.info("gallery-dl ダウンロード開始: url=%s", url)
 

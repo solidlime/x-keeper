@@ -191,6 +191,43 @@ _INDEX_HTML = (
       </div>
       <button type="submit" class="btn btn-outline-primary">保存する</button>
     </form>
+
+    <hr class="my-4">
+
+    <!-- Pixiv リフレッシュトークン設定 -->
+    <h6 class="fw-bold">
+      Pixiv リフレッシュトークン
+      <span class="badge bg-secondary fw-normal ms-1">任意</span>
+    </h6>
+    <p class="small text-muted mb-3">
+      Pixiv の画像をダウンロードするために必要です。Cookie では動作しません。<br>
+      以下のコマンドでトークンを取得してください:
+    </p>
+    <pre class="bg-light border rounded p-2 small mb-3"># Docker 運用の場合
+docker exec -it x-keeper gallery-dl oauth:pixiv
+
+# ローカル実行の場合
+gallery-dl oauth:pixiv</pre>
+    <p class="small text-muted mb-3">
+      ブラウザが開くので Pixiv にログインすると、ターミナルに
+      <code>refresh-token</code> が表示されます。それをコピーして下に貼り付けてください。
+    </p>
+
+    {% if pixiv_saved %}
+    <div class="alert alert-success py-2 small">Pixiv リフレッシュトークンを保存しました。</div>
+    {% endif %}
+
+    <form method="post" action="/save-pixiv-token">
+      <div class="mb-3">
+        <label class="form-label fw-semibold">リフレッシュトークン</label>
+        <input type="password" class="form-control font-monospace"
+               name="pixiv_token"
+               placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+               value="{{ prefill.pixiv_token }}">
+        <div class="form-text">空のまま保存すると設定を削除します。</div>
+      </div>
+      <button type="submit" class="btn btn-outline-primary">保存する</button>
+    </form>
   </div>
 </div>
 </body></html>
@@ -286,7 +323,7 @@ def _current_status() -> dict[str, bool]:
     from dotenv import dotenv_values
 
     env = dotenv_values(_ENV_FILE) if _ENV_FILE.exists() else {}
-    keys = ["DISCORD_BOT_TOKEN", "DISCORD_CHANNEL_ID", "GALLERY_DL_COOKIES_FILE"]
+    keys = ["DISCORD_BOT_TOKEN", "DISCORD_CHANNEL_ID", "GALLERY_DL_COOKIES_FILE", "PIXIV_REFRESH_TOKEN"]
     return {k: bool(env.get(k)) for k in keys}
 
 
@@ -297,6 +334,7 @@ def _prefill_values() -> dict[str, str]:
     return {
         "channel_id": env.get("DISCORD_CHANNEL_ID", ""),
         "cookies_file": env.get("GALLERY_DL_COOKIES_FILE", ""),
+        "pixiv_token": env.get("PIXIV_REFRESH_TOKEN", ""),
     }
 
 
@@ -312,6 +350,7 @@ def index():
         saved=request.args.get("saved") == "1",
         error=request.args.get("error"),
         cookies_saved=request.args.get("cookies_saved") == "1",
+        pixiv_saved=request.args.get("pixiv_saved") == "1",
     )
 
 
@@ -335,6 +374,13 @@ def save_cookies():
     cookies_file = request.form.get("cookies_file", "").strip()
     upsert_env_value("GALLERY_DL_COOKIES_FILE", cookies_file)
     return redirect("/?cookies_saved=1")
+
+
+@app.route("/save-pixiv-token", methods=["POST"])
+def save_pixiv_token():
+    token = request.form.get("pixiv_token", "").strip()
+    upsert_env_value("PIXIV_REFRESH_TOKEN", token)
+    return redirect("/?pixiv_saved=1")
 
 
 @app.route("/gallery")

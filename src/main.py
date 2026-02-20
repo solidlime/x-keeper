@@ -103,7 +103,7 @@ async def async_main() -> None:
     settings = await _wait_for_required_settings(settings, logger)
 
     twitter = TwitterClient(settings.gallery_dl_cookies_file)
-    downloader = MediaDownloader(settings.save_path, settings.gallery_dl_cookies_file)
+    downloader = MediaDownloader(settings.save_path, settings.gallery_dl_cookies_file, settings.pixiv_refresh_token)
 
     bot = XKeeperBot(settings.discord_channel_id, twitter, downloader)  # type: ignore[arg-type]
     logger.info("Discord Bot を起動します (チャンネル ID: %d)...", settings.discord_channel_id)
