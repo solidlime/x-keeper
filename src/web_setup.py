@@ -19,7 +19,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from flask import Flask, redirect, render_template_string, request, send_from_directory
+from flask import Flask, redirect, render_template_string, request, send_from_directory, session
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(32)
@@ -285,6 +285,47 @@ _INDEX_HTML = (
 """
 )
 
+_PIXIV_CONTINUE_HTML = (
+    _BASE_STYLE
+    + """
+<div class="card shadow-sm">
+  <div class="card-body p-4">
+    <h5 class="card-title mb-3">Pixiv 認証 — ステップ 2/2</h5>
+
+    <div class="alert alert-info small mb-3">
+      ログインは完了しています。<br>
+      下のボタンで<strong>認証の続き</strong>を新しいタブで開いてください。<br>
+      ページが表示されたら、アドレスバーの URL をコピーして下のフォームに貼り付けてください。<br>
+      <span class="text-muted">（ページが真っ白やエラーでも OK。URL に <code>?code=</code> が入っていれば成功）</span>
+    </div>
+
+    <a href="{{ return_to_url }}" target="_blank" class="btn btn-danger w-100 mb-4">
+      認証を続ける（新しいタブで開く）
+    </a>
+
+    <p class="small text-muted mb-1">
+      コピーする URL の例:<br>
+      <code>https://app-api.pixiv.net/web/v1/users/auth/pixiv/callback?code=XXXXX…</code>
+    </p>
+
+    <form method="post" action="/pixiv-oauth/exchange">
+      <div class="input-group">
+        <input type="text" class="form-control form-control-sm font-monospace"
+               name="callback_url" required
+               placeholder="https://app-api.pixiv.net/…/callback?code=...">
+        <button type="submit" class="btn btn-primary btn-sm">取得して保存</button>
+      </div>
+    </form>
+
+    <div class="mt-3">
+      <a href="/" class="small text-muted">← セットアップに戻る</a>
+    </div>
+  </div>
+</div>
+</body></html>
+"""
+)
+
 _GALLERY_INDEX_HTML = (
     _BASE_STYLE
     + """
@@ -438,8 +479,6 @@ def save_pixiv_token():
 @app.route("/pixiv-oauth/start")
 def pixiv_oauth_start():
     """PKCE コードを生成して Pixiv 認証 URL を返す。"""
-    from flask import session
-
     # gallery-dl と同じ方法で生成 (hex 文字列)
     code_verifier = os.urandom(32).hex()
     digest = hashlib.sha256(code_verifier.encode()).digest()
@@ -459,22 +498,29 @@ def pixiv_oauth_start():
 @app.route("/pixiv-oauth/exchange", methods=["POST"])
 def pixiv_oauth_exchange():
     """コールバック URL からコードを取り出してリフレッシュトークンに交換する。"""
-    from flask import session
-
     callback_url = request.form.get("callback_url", "").strip()
-    code_verifier = session.pop("pixiv_code_verifier", None)
+    code_verifier = session.get("pixiv_code_verifier")
 
     if not code_verifier:
         return redirect("/?pixiv_error=セッションが切れました。もう一度やり直してください。")
 
-    params = urllib.parse.parse_qs(urllib.parse.urlparse(callback_url).query)
+    parsed = urllib.parse.urlparse(callback_url)
+    params = urllib.parse.parse_qs(parsed.query)
     codes = params.get("code", [])
-    if not codes:
-        if "post-redirect" in callback_url or "return_to" in callback_url:
-            msg = "リダイレクト途中のURLが貼られています。ブラウザがapp-api.pixiv.net/.../callback?code=...に到達してからコピーしてください。"
-        else:
-            msg = "URLにcodeが含まれていません。アドレスバーのURLをそのままコピーしてください。"
+
+    # post-redirect URL が貼られた場合は return_to を取り出して中継ページへ
+    if not codes and ("post-redirect" in callback_url or "return_to" in params):
+        return_to = params.get("return_to", [""])[0]
+        if return_to:
+            return render_template_string(_PIXIV_CONTINUE_HTML, return_to_url=return_to)
+        msg = "URLを解析できませんでした。ページをリロードして最初からやり直してください。"
         return redirect(f"/?pixiv_error={urllib.parse.quote(msg)}")
+
+    if not codes:
+        msg = "URLにcodeが含まれていません。アドレスバーのURLをそのままコピーしてください。"
+        return redirect(f"/?pixiv_error={urllib.parse.quote(msg)}")
+
+    session.pop("pixiv_code_verifier", None)
 
     data = urllib.parse.urlencode({
         "client_id": _PIXIV_CLIENT_ID,
