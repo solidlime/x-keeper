@@ -86,9 +86,9 @@ python -m src.main
 
 ボリューム:
 - `./.env:/app/.env` — 設定の永続化
-- `./data:/app/data` — メディア保存先 (NAS では左辺を適宜変更、例: `/volume1/data:/app/data`)
+- `./data:/data` — メディア保存先 (NAS では左辺を実際のパスに変更、例: `/volume1/docker/x-keeper/data:/data`)
 
-`save_path` のデフォルトは `./data`。WORKDIR が `/app` のため `/app/data` にマウントすれば `SAVE_PATH` 指定不要。
+`SAVE_PATH=/data` は `docker-compose.yml` の `environment` で設定済み。`.env` の同名キーより `environment` が優先されるため、`.env` 側の値は無視される。
 
 GitHub Actions (`docker-build.yml`) が `ghcr.io/solidlime/x-keeper:latest` に自動ビルドする。
 ローカルビルドを使う場合は `.env` に `DOCKER_IMAGE=x-keeper:latest` を設定して `docker compose build` する。
