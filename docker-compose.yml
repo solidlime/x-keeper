@@ -6,7 +6,8 @@ services:
       # キャッシュ効率化のためビルドターゲットを明示
       target: runtime
 
-    image: keep-image-saver:latest
+    # ローカルビルド時は docker compose build でタグが上書きされる
+    image: ${DOCKER_IMAGE:-ghcr.io/solidlime/x-keeper:latest}
 
     container_name: keep-image-saver
 
@@ -54,7 +55,7 @@ services:
       dockerfile: Dockerfile
       target: runtime
 
-    image: keep-image-saver:latest
+    image: ${DOCKER_IMAGE:-ghcr.io/solidlime/x-keeper:latest}
 
     container_name: keep-image-saver-setup
 
