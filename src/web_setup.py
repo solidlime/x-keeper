@@ -226,10 +226,16 @@ _INDEX_HTML = (
       Pixiv にログインしてトークンを取得
     </button>
     <div id="pixiv-callback-section" style="display:none">
-      <div class="alert alert-info py-2 small mb-2">
-        新しいタブで Pixiv にログインしてください。<br>
-        ログイン後、ブラウザのアドレスバーに表示される URL をコピーして貼り付けてください。<br>
-        <code class="small">https://app-api.pixiv.net/web/v1/users/auth/pixiv/callback?code=…</code>
+      <div class="alert alert-warning py-2 small mb-2">
+        <strong>⚠️ コピーするタイミングに注意</strong><br>
+        ログイン後、ブラウザは数回リダイレクトします。<br>
+        アドレスバーが <strong><code>app-api.pixiv.net/…/callback?code=</code></strong>
+        で始まる URL になるまで待ってから コピーしてください。<br>
+        （ページ自体はエラーや真っ白でも構いません。URL に <code>?code=</code> が入っていれば OK）
+      </div>
+      <div class="alert alert-secondary py-2 small mb-2">
+        ❌ 間違い例: <code>accounts.pixiv.net/post-redirect?return_to=…</code><br>
+        ✅ 正しい例: <code>app-api.pixiv.net/web/v1/users/auth/pixiv/callback?code=XXXXX</code>
       </div>
       <form method="post" action="/pixiv-oauth/exchange">
         <div class="input-group mb-1">
@@ -464,7 +470,11 @@ def pixiv_oauth_exchange():
     params = urllib.parse.parse_qs(urllib.parse.urlparse(callback_url).query)
     codes = params.get("code", [])
     if not codes:
-        return redirect("/?pixiv_error=URL+から+code+を取得できませんでした。正しい URL を貼り付けてください。")
+        if "post-redirect" in callback_url or "return_to" in callback_url:
+            msg = "リダイレクト途中のURLが貼られています。ブラウザがapp-api.pixiv.net/.../callback?code=...に到達してからコピーしてください。"
+        else:
+            msg = "URLにcodeが含まれていません。アドレスバーのURLをそのままコピーしてください。"
+        return redirect(f"/?pixiv_error={urllib.parse.quote(msg)}")
 
     data = urllib.parse.urlencode({
         "client_id": _PIXIV_CLIENT_ID,
