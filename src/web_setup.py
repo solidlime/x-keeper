@@ -221,27 +221,34 @@ _INDEX_HTML = (
     <div class="alert alert-danger py-2 small">{{ pixiv_error }}</div>
     {% endif %}
 
+    <div class="alert alert-secondary small mb-2">
+      💡 <strong>すでに Pixiv にログイン済みの場合</strong>は
+      <strong>シークレット (プライベート) ウィンドウ</strong>で開いてください。<br>
+      そうしないと途中で止まるリダイレクトが発生することがあります。
+    </div>
+
     <button type="button" class="btn btn-outline-danger mb-3" id="pixiv-login-btn"
             onclick="startPixivOAuth(this)">
-      Pixiv にログインしてトークンを取得
+      Pixiv にログインしてトークンを取得（シークレットウィンドウで開く）
     </button>
     <div id="pixiv-callback-section" style="display:none">
       <div class="alert alert-warning py-2 small mb-2">
-        <strong>⚠️ コピーするタイミングに注意</strong><br>
-        ログイン後、ブラウザは数回リダイレクトします。<br>
-        アドレスバーが <strong><code>app-api.pixiv.net/…/callback?code=</code></strong>
-        で始まる URL になるまで待ってから コピーしてください。<br>
-        （ページ自体はエラーや真っ白でも構いません。URL に <code>?code=</code> が入っていれば OK）
+        ログイン後、アドレスバーに表示された URL をコピーして貼り付けてください。<br>
+        以下のいずれかであれば OK です:<br>
+        <strong><code>https://app-api.pixiv.net/…/callback?code=XXXXX…</code></strong><br>
+        <strong><code>pixiv://account/login?code=XXXXX…</code></strong>
+        <span class="d-block text-muted mt-1">（ページが真っ白・エラーでも OK。<code>?code=</code> が入っていれば成功）</span>
       </div>
       <div class="alert alert-secondary py-2 small mb-2">
-        ❌ 間違い例: <code>accounts.pixiv.net/post-redirect?return_to=…</code><br>
-        ✅ 正しい例: <code>app-api.pixiv.net/web/v1/users/auth/pixiv/callback?code=XXXXX</code>
+        途中で止まった URL も貼り付けてください。自動で対応します:<br>
+        <code>accounts.pixiv.net/post-redirect?…</code> → 次の手順を案内<br>
+        <code>app-api.pixiv.net/…/start?…</code> → ページが開いたら <code>pixiv://</code> URL を探してコピー
       </div>
       <form method="post" action="/pixiv-oauth/exchange">
         <div class="input-group mb-1">
           <input type="text" class="form-control form-control-sm font-monospace"
                  name="callback_url" required
-                 placeholder="https://app-api.pixiv.net/web/v1/users/auth/pixiv/callback?code=...">
+                 placeholder="pixiv://account/login?code=... または callback?code=...">
           <button type="submit" class="btn btn-primary btn-sm">取得して保存</button>
         </div>
       </form>
@@ -292,27 +299,40 @@ _PIXIV_CONTINUE_HTML = (
   <div class="card-body p-4">
     <h5 class="card-title mb-3">Pixiv 認証 — ステップ 2/2</h5>
 
+    {% if "/start" in return_to_url or "/login" in return_to_url %}
+    <div class="alert alert-info small mb-3">
+      ログインは完了しています。下のボタンで新しいタブを開いてください。<br>
+      Pixiv アプリへのリダイレクトが走り、アドレスバーが<br>
+      <strong><code>pixiv://account/login?code=XXXXX…</code></strong><br>
+      に変わります。その URL をコピーして下のフォームに貼り付けてください。<br>
+      <span class="text-muted">（「このアドレスは開けません」などのエラー表示は正常です）</span>
+    </div>
+    {% else %}
     <div class="alert alert-info small mb-3">
       ログインは完了しています。<br>
       下のボタンで<strong>認証の続き</strong>を新しいタブで開いてください。<br>
-      ページが表示されたら、アドレスバーの URL をコピーして下のフォームに貼り付けてください。<br>
-      <span class="text-muted">（ページが真っ白やエラーでも OK。URL に <code>?code=</code> が入っていれば成功）</span>
+      アドレスバーが <code>callback?code=…</code> または <code>pixiv://account/login?code=…</code> になったらコピーしてください。<br>
+      <span class="text-muted">（ページが真っ白やエラーでも OK）</span>
     </div>
+    {% endif %}
 
-    <a href="{{ return_to_url }}" target="_blank" class="btn btn-danger w-100 mb-4">
-      認証を続ける（新しいタブで開く）
-    </a>
+    <form method="POST" action="{{ return_to_url }}" target="_blank" style="display:contents">
+      <button type="submit" class="btn btn-danger w-100 mb-4">
+        認証を続ける（新しいタブで開く）
+      </button>
+    </form>
 
     <p class="small text-muted mb-1">
-      コピーする URL の例:<br>
-      <code>https://app-api.pixiv.net/web/v1/users/auth/pixiv/callback?code=XXXXX…</code>
+      貼り付ける URL（どちらでも OK）:<br>
+      <code>pixiv://account/login?code=XXXXX…</code><br>
+      <code>https://app-api.pixiv.net/…/callback?code=XXXXX…</code>
     </p>
 
     <form method="post" action="/pixiv-oauth/exchange">
       <div class="input-group">
         <input type="text" class="form-control form-control-sm font-monospace"
                name="callback_url" required
-               placeholder="https://app-api.pixiv.net/…/callback?code=...">
+               placeholder="pixiv://account/login?code=... または callback?code=...">
         <button type="submit" class="btn btn-primary btn-sm">取得して保存</button>
       </div>
     </form>
@@ -507,6 +527,10 @@ def pixiv_oauth_exchange():
     parsed = urllib.parse.urlparse(callback_url)
     params = urllib.parse.parse_qs(parsed.query)
     codes = params.get("code", [])
+
+    # /start URL が貼られた場合 → 続行ページへ誘導（エラーで弾かない）
+    if not codes and ("/web/v1/login" in callback_url or "/auth/pixiv/start" in callback_url):
+        return render_template_string(_PIXIV_CONTINUE_HTML, return_to_url=callback_url)
 
     # post-redirect URL が貼られた場合は return_to を取り出して中継ページへ
     if not codes and ("post-redirect" in callback_url or "return_to" in params):
