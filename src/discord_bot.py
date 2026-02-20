@@ -92,10 +92,12 @@ class XKeeperBot(discord.Client):
         for url in urls:
             try:
                 thread = self.twitter.get_thread(url)
-                if thread.tweet_urls:
-                    self.downloader.download_all(thread.tweet_urls)
-                else:
+                if not thread.tweet_urls:
                     logger.info("メディアが見つかりませんでした: url=%s", url)
+                    continue
+                saved = self.downloader.download_all(thread.tweet_urls)
+                if not saved:
+                    errors.append(f"ダウンロード失敗 (ファイルが保存されませんでした): url={url}")
             except Exception as exc:
                 logger.error("処理エラー: url=%s, error=%s", url, exc)
                 errors.append(str(exc))
