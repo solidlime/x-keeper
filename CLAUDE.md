@@ -5,16 +5,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 開発コマンド
 
 ```bash
-# 仮想環境の作成と依存インストール
+# Docker (推奨)
+docker compose up -d
+docker compose logs -f
+docker compose down
+
+# ローカル実行 (開発・デバッグ用)
 python -m venv .venv
 .venv/Scripts/pip install -r requirements.txt   # Windows
 # source .venv/bin/activate && pip install -r requirements.txt  # Linux/Mac
-
-# 起動 (要 .env)
-.venv/Scripts/python -m src.main
-
-# Web サーバー単独起動 (デバッグ用)
-.venv/Scripts/python -m src.web_setup
+.venv/Scripts/python -m src.main   # または start.bat / start.sh
 ```
 
 テスト・lint ツールは未導入。インポートチェックは `python -c "from src.XXX import YYY"` で行う。
@@ -79,6 +79,19 @@ python -m src.main
 - `/gallery` — 日付フォルダ一覧
 - `/gallery/<YYYY-MM-DD>` — 画像グリッド・動画・音声プレイヤー
 - `/media/<path>` — `send_from_directory` によるメディア配信
+
+### Docker
+
+`Dockerfile` はシングルステージビルド。非 root ユーザー (`appuser:1000`) で実行。
+
+ボリューム:
+- `./.env:/app/.env` — 設定の永続化
+- `./data:/data` — メディア保存先 (NAS では左辺を適宜変更)
+
+`SAVE_PATH=/data` は `docker-compose.yml` の `environment` で固定。
+
+GitHub Actions (`docker-build.yml`) が `ghcr.io/solidlime/x-keeper:latest` に自動ビルドする。
+ローカルビルドを使う場合は `.env` に `DOCKER_IMAGE=x-keeper:latest` を設定して `docker compose build` する。
 
 ### 非公式 API への依存
 

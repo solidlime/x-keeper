@@ -1,0 +1,33 @@
+services:
+  x-keeper:
+    image: ${DOCKER_IMAGE:-ghcr.io/solidlime/x-keeper:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: x-keeper
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      PYTHONUTF8: "1"
+      # コンテナ内の保存先 (volumes の右辺と一致させること)
+      SAVE_PATH: /data
+
+    ports:
+      - "0.0.0.0:${WEB_SETUP_PORT:-8989}:${WEB_SETUP_PORT:-8989}"
+
+    volumes:
+      # .env をマウントして Web UI からの設定変更をホストに反映
+      - ./.env:/app/.env
+      # メディア保存先 (NAS の場合は左辺を適宜変更)
+      # 例: Synology NAS → /volume1/data:/data
+      - ./data:/data
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
