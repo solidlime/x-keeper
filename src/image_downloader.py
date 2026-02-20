@@ -1,6 +1,6 @@
 """
-画像ダウンローダーモジュール。
-gallery-dl を subprocess で呼び出して画像・動画を保存する。
+メディアダウンローダーモジュール。
+gallery-dl を subprocess で呼び出して画像・動画・音声を保存する。
 Twitter API キーは不要。
 """
 
@@ -9,7 +9,7 @@ import subprocess
 from datetime import date
 from pathlib import Path
 
-from .models import SavedImage
+from .models import SavedFile
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +20,8 @@ _MAX_RETRIES = 3
 _DOWNLOAD_TIMEOUT = 300
 
 
-class ImageDownloader:
-    """gallery-dl を使ってツイートの画像・動画をダウンロードするクラス。
+class MediaDownloader:
+    """gallery-dl を使ってツイートの画像・動画・音声をダウンロードするクラス。
 
     ファイル名生成・最高解像度選択・リトライは gallery-dl に任せる。
     """
@@ -30,7 +30,7 @@ class ImageDownloader:
         """初期化する。
 
         Args:
-            save_root: 画像保存先のルートディレクトリパス。
+            save_root: メディア保存先のルートディレクトリパス。
                        日付ごとにサブフォルダ (YYYY-MM-DD) が自動作成される。
             cookies_file: gallery-dl に渡す Cookie ファイルパス。
                           不要なら None。
@@ -41,17 +41,17 @@ class ImageDownloader:
         self._save_root = Path(save_root)
         self._cookies_file = cookies_file
         logger.info(
-            "ImageDownloader を初期化しました: save_root=%s", save_root
+            "MediaDownloader を初期化しました: save_root=%s", save_root
         )
 
-    def download_all(self, tweet_urls: list[str]) -> list[SavedImage]:
+    def download_all(self, tweet_urls: list[str]) -> list[SavedFile]:
         """ツイート URL リストを全てダウンロードして保存する。
 
         Args:
             tweet_urls: ダウンロード対象のツイート URL リスト。
 
         Returns:
-            保存に成功した SavedImage のリスト。
+            保存に成功した SavedFile のリスト。
 
         Raises:
             RuntimeError: 保存先ディレクトリの作成に失敗した場合。
@@ -60,12 +60,12 @@ class ImageDownloader:
         dest_dir = self._save_root / today.isoformat()
         _ensure_directory(dest_dir)
 
-        saved: list[SavedImage] = []
+        saved: list[SavedFile] = []
         for url in tweet_urls:
             new_files = self._download_one(url, dest_dir)
             for path in new_files:
                 saved.append(
-                    SavedImage(
+                    SavedFile(
                         source_url=url,
                         saved_path=str(path),
                         date_folder=today,

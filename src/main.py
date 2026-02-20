@@ -9,7 +9,7 @@ import threading
 import time
 
 from .config import Settings
-from .image_downloader import ImageDownloader
+from .image_downloader import MediaDownloader
 from .keep_client import KeepClient
 from .models import ProcessResult
 from .twitter_client import TwitterClient
@@ -89,10 +89,10 @@ def process_note(
             continue
 
         saved = downloader.download_all(thread.tweet_urls)
-        result.saved_images.extend(saved)
+        result.saved_files.extend(saved)
 
         if not saved:
-            result.errors.append(f"画像を保存できませんでした: url={url}")
+            result.errors.append(f"メディアを保存できませんでした: url={url}")
 
     # エラーなしに全画像を保存できた場合のみ Keep ノートを削除する
     if result.success:
@@ -137,9 +137,9 @@ def run_once(
         result = process_note(note, urls, twitter, downloader, keep)
         results.append(result)
         logger.info(
-            "ノート処理完了: note_id=%s, 保存画像数=%d, エラー数=%d",
+            "ノート処理完了: note_id=%s, 保存ファイル数=%d, エラー数=%d",
             result.note_id,
-            len(result.saved_images),
+            len(result.saved_files),
             len(result.errors),
         )
 
@@ -259,7 +259,7 @@ def main() -> None:
                 settings.google_oauth_refresh_token,  # type: ignore[arg-type]
             )
             twitter = TwitterClient(settings.gallery_dl_cookies_file)
-            downloader = ImageDownloader(settings.save_path, settings.gallery_dl_cookies_file)
+            downloader = MediaDownloader(settings.save_path, settings.gallery_dl_cookies_file)
             break
         except RuntimeError as exc:
             logger.critical(

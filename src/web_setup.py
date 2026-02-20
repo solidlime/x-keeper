@@ -14,12 +14,14 @@ OAuth2 フローを実行してリフレッシュトークンを .env に保存�
 """
 
 import os
+import re
 import secrets
+from pathlib import Path
 
 # ローカル HTTP でも OAuth2 フローを通すために必要 (本番環境では使用しないこと)
 os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
 
-from flask import Flask, redirect, render_template_string, request, session, url_for
+from flask import Flask, redirect, render_template_string, request, send_from_directory, session, url_for
 
 from src.token_setup import _ENV_FILE, upsert_env_value
 
@@ -27,6 +29,7 @@ app = Flask(__name__)
 app.secret_key = secrets.token_hex(32)
 
 _PORT = int(os.getenv("WEB_SETUP_PORT", "8989"))
+_SAVE_PATH = os.getenv("SAVE_PATH", "/data/images")
 
 _SCOPES = [
     "https://www.googleapis.com/auth/memento",
@@ -41,14 +44,14 @@ _BASE_STYLE = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>x-keeper セットアップ</title>
+  <title>x-keeper</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
         rel="stylesheet"
         integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
         crossorigin="anonymous">
   <style>
     body { background: #f8f9fa; }
-    .card { max-width: 680px; margin: 60px auto; border-radius: 12px; }
+    .card { max-width: 680px; margin: 24px auto; border-radius: 12px; }
     .badge-set   { background-color: #198754; }
     .badge-unset { background-color: #dc3545; }
     details { border: 1px solid #dee2e6; border-radius: 6px; margin-bottom: 1rem; }
@@ -60,6 +63,15 @@ _BASE_STYLE = """
   </style>
 </head>
 <body>
+<nav class="navbar navbar-expand-sm navbar-dark bg-dark mb-3">
+  <div class="container-fluid px-4">
+    <span class="navbar-brand fw-bold">x-keeper</span>
+    <div class="navbar-nav flex-row gap-3">
+      <a class="nav-link" href="/">セットアップ</a>
+      <a class="nav-link" href="/gallery">ギャラリー</a>
+    </div>
+  </div>
+</nav>
 """
 
 _INDEX_HTML = (
@@ -236,7 +248,89 @@ _ERROR_HTML = (
 """
 )
 
+_GALLERY_INDEX_HTML = (
+    _BASE_STYLE
+    + """
+<div class="container" style="max-width:900px">
+  <h5 class="mb-3">ダウンロード済みメディア</h5>
+  {% if not dirs %}
+  <p class="text-muted">まだメディアがありません。</p>
+  {% else %}
+  <div class="list-group">
+    {% for d in dirs %}
+    <a href="/gallery/{{ d.name }}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+      <span class="fw-semibold font-monospace">{{ d.name }}</span>
+      <span class="badge bg-secondary rounded-pill">{{ d.count }} ファイル</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+</body></html>
+"""
+)
+
+_GALLERY_DATE_HTML = (
+    _BASE_STYLE
+    + """
+<div class="container" style="max-width:1200px">
+  <div class="d-flex align-items-center gap-3 mb-3">
+    <a href="/gallery" class="btn btn-sm btn-outline-secondary">← 戻る</a>
+    <h5 class="mb-0 font-monospace">{{ date }}</h5>
+    <span class="text-muted small">{{ files|length }} ファイル</span>
+  </div>
+  {% if not files %}
+  <p class="text-muted">ファイルがありません。</p>
+  {% else %}
+  <div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 row-cols-lg-5 g-2">
+    {% for f in files %}
+    <div class="col">
+      {% if f.type == "image" %}
+      <a href="/media/{{ f.path }}" target="_blank" title="{{ f.name }}">
+        <img src="/media/{{ f.path }}" class="rounded"
+             style="width:100%;aspect-ratio:1/1;object-fit:cover" alt="{{ f.name }}">
+      </a>
+      {% elif f.type == "video" %}
+      <div>
+        <video controls class="rounded" style="width:100%;aspect-ratio:16/9;object-fit:cover"
+               title="{{ f.name }}">
+          <source src="/media/{{ f.path }}">
+        </video>
+        <div class="small text-muted text-truncate mt-1" title="{{ f.name }}">{{ f.name }}</div>
+      </div>
+      {% elif f.type == "audio" %}
+      <div class="p-2 bg-white rounded border">
+        <div class="small text-muted text-truncate mb-1" title="{{ f.name }}">{{ f.name }}</div>
+        <audio controls style="width:100%"><source src="/media/{{ f.path }}"></audio>
+      </div>
+      {% else %}
+      <div class="p-2 bg-white rounded border">
+        <a href="/media/{{ f.path }}" target="_blank"
+           class="small text-truncate d-block" title="{{ f.name }}">{{ f.name }}</a>
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+</body></html>
+"""
+)
+
 # ── ヘルパー ──────────────────────────────────────────────────────────────────
+
+
+def _media_type(filename: str) -> str:
+    """ファイル名からメディア種別を返す。"""
+    ext = Path(filename).suffix.lower().lstrip(".")
+    if ext in {"jpg", "jpeg", "png", "gif", "webp", "avif"}:
+        return "image"
+    if ext in {"mp4", "mov", "mkv", "avi", "webm", "m4v"}:
+        return "video"
+    if ext in {"mp3", "ogg", "aac", "flac", "wav", "m4a", "opus"}:
+        return "audio"
+    return "other"
 
 
 def _current_status() -> dict[str, bool]:
@@ -381,6 +475,40 @@ def save_cookies():
     cookies_file = request.form.get("cookies_file", "").strip()
     upsert_env_value("GALLERY_DL_COOKIES_FILE", cookies_file)
     return redirect("/?cookies_saved=1")
+
+
+@app.route("/gallery")
+def gallery():
+    save_path = Path(_SAVE_PATH)
+    if not save_path.exists():
+        dirs = []
+    else:
+        dirs = [
+            {"name": d.name, "count": sum(1 for f in d.iterdir() if f.is_file())}
+            for d in sorted(save_path.iterdir(), reverse=True)
+            if d.is_dir() and re.match(r"^\d{4}-\d{2}-\d{2}$", d.name)
+        ]
+    return render_template_string(_GALLERY_INDEX_HTML, dirs=dirs)
+
+
+@app.route("/gallery/<date_str>")
+def gallery_date(date_str: str):
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
+        return redirect("/gallery")
+    target = Path(_SAVE_PATH) / date_str
+    if not target.exists() or not target.is_dir():
+        return redirect("/gallery")
+    files = [
+        {"name": f.name, "type": _media_type(f.name), "path": f"{date_str}/{f.name}"}
+        for f in sorted(target.iterdir())
+        if f.is_file()
+    ]
+    return render_template_string(_GALLERY_DATE_HTML, date=date_str, files=files)
+
+
+@app.route("/media/<path:filepath>")
+def serve_media(filepath: str):
+    return send_from_directory(_SAVE_PATH, filepath)
 
 
 # ── エントリーポイント ─────────────────────────────────────────────────────────
