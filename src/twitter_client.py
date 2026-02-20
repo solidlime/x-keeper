@@ -114,13 +114,12 @@ class TwitterClient:
             logger.debug("著者フィルターを設定: %s", author_filter)
         elif author_name and author_name != author_filter:
             logger.info(
-                "別ユーザーのツイートでスレッド遡りを停止: tweet_id=%s, author=%s (filter=%s)",
+                "別ユーザーのツイートをスキップ: tweet_id=%s, author=%s (filter=%s)",
                 tweet_id, author_name, author_filter,
             )
-            return
-
-        tweet_urls.append(url)
-        logger.debug("ツイートを追加しました: tweet_id=%s (depth=%d)", tweet_id, depth)
+        else:
+            tweet_urls.append(url)
+            logger.debug("ツイートを追加しました: tweet_id=%s (depth=%d)", tweet_id, depth)
 
         if reply_id is None:
             return
