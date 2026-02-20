@@ -9,10 +9,7 @@ from datetime import date
 
 @dataclass
 class TweetThread:
-    """1つのスレッド (会話) に含まれる全ツイートの情報をまとめたもの。
-
-    gallery-dl でダウンロードするため、tweet URL のリストだけを保持する。
-    """
+    """1つのスレッド (会話) に含まれる全ツイートの情報をまとめたもの。"""
 
     conversation_id: str
     """スレッドの起点となる会話 ID (起点ツイートの tweet_id)。"""
@@ -33,25 +30,3 @@ class SavedFile:
 
     date_folder: date
     """保存されたサブフォルダの日付。"""
-
-
-@dataclass
-class ProcessResult:
-    """1件の Keep ノートを処理した結果をまとめたもの。"""
-
-    note_id: str
-    """処理した Keep ノートの ID。"""
-
-    tweet_urls: list[str]
-    """ノート内で検出された X (Twitter) URL 一覧。"""
-
-    saved_files: list[SavedFile] = field(default_factory=list)
-    """実際に保存されたファイル一覧。"""
-
-    errors: list[str] = field(default_factory=list)
-    """処理中に発生したエラーメッセージ一覧。"""
-
-    @property
-    def success(self) -> bool:
-        """エラーなしに全ファイルを保存できた場合 True。"""
-        return len(self.errors) == 0 and len(self.saved_files) > 0

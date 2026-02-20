@@ -170,7 +170,7 @@ def _assert_gallery_dl_available() -> None:
     )
     if result.returncode != 0:
         raise RuntimeError(
-            "gallery-dl が見つかりません。Dockerfile で pip install gallery-dl されているか確認してください。"
+            "gallery-dl が見つかりません。pip install gallery-dl を実行してください。"
         )
     logger.debug("gallery-dl バージョン確認: %s", result.stdout.strip())
 

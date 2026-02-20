@@ -1,16 +1,13 @@
-# Google Keep (非公式クライアント)
-gkeepapi==0.16.0
+# Discord Bot
+discord.py>=2.4.0
 
-# Google OAuth2 ブラウザ認証
-google-auth-oauthlib>=1.2.0
-
-# 画像・動画ダウンローダー (Twitter API キー不要)
+# X (Twitter) メディアダウンローダー (API キー不要)
 gallery-dl==1.27.4
 
 # 設定管理 (pydantic v2 ベース)
 pydantic-settings==2.3.4
 pydantic==2.8.2
 
-# Web セットアップサーバー (Google OAuth2 認証情報を Web UI で設定するために使用)
+# Web サーバー (ギャラリー UI)
 flask>=3.0.0
 python-dotenv>=1.0.0
