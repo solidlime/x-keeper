@@ -434,19 +434,18 @@ def pixiv_oauth_start():
     """PKCE コードを生成して Pixiv 認証 URL を返す。"""
     from flask import session
 
-    code_verifier = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode()
-    code_challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(code_verifier.encode()).digest()
-    ).rstrip(b"=").decode()
+    # gallery-dl と同じ方法で生成 (hex 文字列)
+    code_verifier = os.urandom(32).hex()
+    digest = hashlib.sha256(code_verifier.encode()).digest()
+    code_challenge = base64.b64encode(digest)[:-1].decode().replace("+", "-").replace("/", "_")
     session["pixiv_code_verifier"] = code_verifier
 
+    # gallery-dl の oauth.py に合わせたパラメーター
     auth_url = (
         "https://app-api.pixiv.net/web/v1/login"
         f"?code_challenge={code_challenge}"
         "&code_challenge_method=S256"
-        f"&client_id={_PIXIV_CLIENT_ID}"
-        "&response_type=code"
-        f"&redirect_uri={urllib.parse.quote(_PIXIV_REDIRECT_URI, safe='')}"
+        "&client=pixiv-android"
     )
     return json.dumps({"auth_url": auth_url}), 200, {"Content-Type": "application/json"}
 
@@ -480,7 +479,7 @@ def pixiv_oauth_exchange():
     req = urllib.request.Request(
         "https://oauth.secure.pixiv.net/auth/token",
         data=data,
-        headers={"User-Agent": "PixivIOSApp/7.13.3 (iOS 14.6; iPhone13,2)"},
+        headers={"User-Agent": "PixivAndroidApp/5.0.234 (Android 11; Pixel 5)"},
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
