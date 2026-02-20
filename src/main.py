@@ -54,7 +54,7 @@ def process_note(
     note,
     urls: list[str],
     twitter: TwitterClient,
-    downloader: ImageDownloader,
+    downloader: MediaDownloader,
     keep: KeepClient,
 ) -> ProcessResult:
     """1件の Keep ノートを処理する。
@@ -116,7 +116,7 @@ def process_note(
 def run_once(
     keep: KeepClient,
     twitter: TwitterClient,
-    downloader: ImageDownloader,
+    downloader: MediaDownloader,
 ) -> list[ProcessResult]:
     """Keep を1回同期して、対象ノートを全て処理する。
 
