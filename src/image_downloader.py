@@ -20,10 +20,15 @@ _MAX_RETRIES = 3
 _DOWNLOAD_TIMEOUT = 300
 
 
-class MediaDownloader:
-    """gallery-dl を使ってツイートの画像・動画・音声をダウンロードするクラス。
+# Twitter 用ファイル名テンプレート
+# 例: AIUnajyu-2022329732306772314-01.jpg
+_TWITTER_FILENAME_TEMPLATE = "{author[name]}-{tweet_id}-{num:02d}.{extension}"
 
-    ファイル名生成・最高解像度選択・リトライは gallery-dl に任せる。
+
+class MediaDownloader:
+    """gallery-dl を使って画像・動画・音声をダウンロードするクラス。
+
+    X/Twitter と Pixiv に対応。ファイル名生成・最高解像度選択・リトライは gallery-dl に任せる。
     """
 
     def __init__(self, save_root: str, cookies_file: str | None) -> None:
@@ -62,7 +67,7 @@ class MediaDownloader:
 
         saved: list[SavedFile] = []
         for url in tweet_urls:
-            new_files = self._download_one(url, dest_dir)
+            new_files = self._download_one(url, dest_dir, _TWITTER_FILENAME_TEMPLATE)
             for path in new_files:
                 saved.append(
                     SavedFile(
@@ -79,9 +84,43 @@ class MediaDownloader:
         )
         return saved
 
+    def download_direct(self, urls: list[str]) -> list[SavedFile]:
+        """Pixiv など Twitter 以外の URL を直接ダウンロードする。
+
+        gallery-dl のデフォルトファイル名を使用する。
+
+        Args:
+            urls: ダウンロード対象の URL リスト。
+
+        Returns:
+            保存に成功した SavedFile のリスト。
+        """
+        today = date.today()
+        dest_dir = self._save_root / today.isoformat()
+        _ensure_directory(dest_dir)
+
+        saved: list[SavedFile] = []
+        for url in urls:
+            new_files = self._download_one(url, dest_dir, filename_template=None)
+            for path in new_files:
+                saved.append(
+                    SavedFile(
+                        source_url=url,
+                        saved_path=str(path),
+                        date_folder=today,
+                    )
+                )
+
+        logger.info(
+            "ダウンロード完了: 動作対象URL数=%d, 保存ファイル数=%d",
+            len(urls),
+            len(saved),
+        )
+        return saved
+
     # ── private ─────────────────────────────────────────────────────────────────────
 
-    def _download_one(self, url: str, dest_dir: Path) -> list[Path]:
+    def _download_one(self, url: str, dest_dir: Path, filename_template: str | None) -> list[Path]:
         """単一ツイートの全メディアを gallery-dl でダウンロードする。
 
         ディレクトリ半差分析により新規保存ファイルを特定する。
@@ -99,11 +138,10 @@ class MediaDownloader:
             "gallery-dl",
             # -D: サブディレクトリを作らず指定ディレクトリに直接保存
             "-D", str(dest_dir),
-            # ファイル名テンプレート: {ユーザーID}-{ツイートID}-{連番2桁}.{拡張子}
-            # 例: AIUnajyu-2022329732306772314-01.jpg
-            "-o", "filename={author[name]}-{tweet_id}-{num:02d}.{extension}",
-            url,
         ]
+        if filename_template:
+            cmd += ["-o", f"filename={filename_template}"]
+        cmd.append(url)
         if self._cookies_file:
             cmd += ["--cookies", self._cookies_file]
             # cookies あり = ログイン済み → conversations=true でスレッド全体を一括取得する

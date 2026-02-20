@@ -1,8 +1,8 @@
 """
-Discord Bot - X (Twitter) メディアダウンローダー。
+Discord Bot - X (Twitter) / Pixiv メディアダウンローダー。
 
-監視チャンネルに X/Twitter URL が投稿されると自動的にメディアをダウンロードし、
-✅ リアクションで処理済みを示す。エラー時は ❌。
+監視チャンネルに X/Twitter または Pixiv の URL が投稿されると自動的にメディアをダウンロードし、
+✅ リアクションで処理済みを示す。エラー時はリアクションなし (次回再試行)。
 
 起動時に未処理の過去メッセージ (最新 100 件) もスキャンして処理する。
 """
@@ -20,9 +20,17 @@ logger = logging.getLogger(__name__)
 TWITTER_URL_PATTERN = re.compile(
     r"https?://(?:twitter\.com|x\.com)/[A-Za-z0-9_]+/status/\d+"
 )
+PIXIV_URL_PATTERN = re.compile(
+    r"https?://(?:www\.)?pixiv\.net/(?:en/)?artworks/\d+"
+)
 
 _REACTION_OK = "✅"
 _REACTION_PROCESSING = "⏳"
+
+
+def _find_media_urls(content: str) -> list[str]:
+    """メッセージ内の X/Twitter および Pixiv の URL を全て返す。"""
+    return TWITTER_URL_PATTERN.findall(content) + PIXIV_URL_PATTERN.findall(content)
 
 
 class XKeeperBot(discord.Client):
@@ -60,7 +68,7 @@ class XKeeperBot(discord.Client):
             return
         if message.author.bot:
             return
-        if not TWITTER_URL_PATTERN.search(message.content):
+        if not _find_media_urls(message.content):
             return
         await self._process_message(message)
 
@@ -75,15 +83,15 @@ class XKeeperBot(discord.Client):
             if message.author.bot:
                 continue
             reactions = [str(r.emoji) for r in message.reactions]
-            if _REACTION_OK in reactions or _REACTION_NG in reactions:
+            if _REACTION_OK in reactions:
                 continue
-            if not TWITTER_URL_PATTERN.search(message.content):
+            if not _find_media_urls(message.content):
                 continue
             logger.info("未処理メッセージを発見: message_id=%d", message.id)
             await self._process_message(message)
 
     async def _process_message(self, message: discord.Message) -> None:
-        urls = TWITTER_URL_PATTERN.findall(message.content)
+        urls = _find_media_urls(message.content)
         logger.info("処理開始: message_id=%d, urls=%s", message.id, urls)
 
         await message.add_reaction(_REACTION_PROCESSING)
@@ -91,13 +99,20 @@ class XKeeperBot(discord.Client):
         errors = []
         for url in urls:
             try:
-                thread = self.twitter.get_thread(url)
-                if not thread.tweet_urls:
-                    logger.info("メディアが見つかりませんでした: url=%s", url)
-                    continue
-                saved = self.downloader.download_all(thread.tweet_urls)
-                if not saved:
-                    errors.append(f"ダウンロード失敗 (ファイルが保存されませんでした): url={url}")
+                if PIXIV_URL_PATTERN.search(url):
+                    # Pixiv: そのまま直接ダウンロード
+                    saved = self.downloader.download_direct([url])
+                    if not saved:
+                        errors.append(f"ダウンロード失敗 (ファイルが保存されませんでした): url={url}")
+                else:
+                    # X/Twitter: スレッドを遡って全ツイートをダウンロード
+                    thread = self.twitter.get_thread(url)
+                    if not thread.tweet_urls:
+                        logger.info("メディアが見つかりませんでした: url=%s", url)
+                        continue
+                    saved = self.downloader.download_all(thread.tweet_urls)
+                    if not saved:
+                        errors.append(f"ダウンロード失敗 (ファイルが保存されませんでした): url={url}")
             except Exception as exc:
                 logger.error("処理エラー: url=%s, error=%s", url, exc)
                 errors.append(str(exc))
