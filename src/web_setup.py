@@ -8,9 +8,15 @@ Web サーバー。Discord セットアップ UI + /gallery メディアビュ�
 ブラウザで http://localhost:8989 を開いてセットアップを進めてください。
 """
 
+import base64
+import hashlib
+import json
 import os
 import re
 import secrets
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 from flask import Flask, redirect, render_template_string, request, send_from_directory
@@ -21,6 +27,11 @@ app.secret_key = secrets.token_hex(32)
 _PORT = int(os.getenv("WEB_SETUP_PORT", "8989"))
 _SAVE_PATH = os.getenv("SAVE_PATH", "./data")
 _ENV_FILE = Path(".env")
+
+# Pixiv OAuth (gallery-dl と同じ公式アプリ資格情報)
+_PIXIV_CLIENT_ID = "MOBrBDS8blbauoSck0ZfDbtuzpyT"
+_PIXIV_CLIENT_SECRET = "lsACyCD94FhDUtGTXi3QzcFE2uU1hqtDaKeqrdwj"
+_PIXIV_REDIRECT_URI = "https://app-api.pixiv.net/web/v1/users/auth/pixiv/callback"
 
 
 # ── .env ユーティリティ ────────────────────────────────────────────────────────
@@ -200,34 +211,68 @@ _INDEX_HTML = (
       <span class="badge bg-secondary fw-normal ms-1">任意</span>
     </h6>
     <p class="small text-muted mb-3">
-      Pixiv の画像をダウンロードするために必要です。Cookie では動作しません。<br>
-      以下のコマンドでトークンを取得してください:
-    </p>
-    <pre class="bg-light border rounded p-2 small mb-3"># Docker 運用の場合
-docker exec -it x-keeper gallery-dl oauth:pixiv
-
-# ローカル実行の場合
-gallery-dl oauth:pixiv</pre>
-    <p class="small text-muted mb-3">
-      ブラウザが開くので Pixiv にログインすると、ターミナルに
-      <code>refresh-token</code> が表示されます。それをコピーして下に貼り付けてください。
+      Pixiv の画像をダウンロードするために必要です。Cookie ではなく OAuth トークンが必要です。
     </p>
 
     {% if pixiv_saved %}
     <div class="alert alert-success py-2 small">Pixiv リフレッシュトークンを保存しました。</div>
     {% endif %}
+    {% if pixiv_error %}
+    <div class="alert alert-danger py-2 small">{{ pixiv_error }}</div>
+    {% endif %}
 
-    <form method="post" action="/save-pixiv-token">
-      <div class="mb-3">
-        <label class="form-label fw-semibold">リフレッシュトークン</label>
-        <input type="password" class="form-control font-monospace"
-               name="pixiv_token"
-               placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-               value="{{ prefill.pixiv_token }}">
-        <div class="form-text">空のまま保存すると設定を削除します。</div>
+    <button type="button" class="btn btn-outline-danger mb-3" id="pixiv-login-btn"
+            onclick="startPixivOAuth(this)">
+      Pixiv にログインしてトークンを取得
+    </button>
+    <div id="pixiv-callback-section" style="display:none">
+      <div class="alert alert-info py-2 small mb-2">
+        新しいタブで Pixiv にログインしてください。<br>
+        ログイン後、ブラウザのアドレスバーに表示される URL をコピーして貼り付けてください。<br>
+        <code class="small">https://app-api.pixiv.net/web/v1/users/auth/pixiv/callback?code=…</code>
       </div>
-      <button type="submit" class="btn btn-outline-primary">保存する</button>
-    </form>
+      <form method="post" action="/pixiv-oauth/exchange">
+        <div class="input-group mb-1">
+          <input type="text" class="form-control form-control-sm font-monospace"
+                 name="callback_url" required
+                 placeholder="https://app-api.pixiv.net/web/v1/users/auth/pixiv/callback?code=...">
+          <button type="submit" class="btn btn-primary btn-sm">取得して保存</button>
+        </div>
+      </form>
+    </div>
+
+    <script>
+    async function startPixivOAuth(btn) {
+      btn.disabled = true;
+      btn.textContent = '認証 URL を生成中...';
+      try {
+        const res = await fetch('/pixiv-oauth/start');
+        const data = await res.json();
+        window.open(data.auth_url, '_blank');
+        document.getElementById('pixiv-callback-section').style.display = 'block';
+        btn.textContent = 'もう一度開く';
+      } catch (e) {
+        btn.textContent = 'エラーが発生しました。再試行してください。';
+      }
+      btn.disabled = false;
+    }
+    </script>
+
+    <details class="mt-3">
+      <summary class="small text-muted">手動でトークンを入力する</summary>
+      <div class="details-body">
+        <form method="post" action="/save-pixiv-token">
+          <div class="input-group mt-2">
+            <input type="password" class="form-control font-monospace"
+                   name="pixiv_token"
+                   placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                   value="{{ prefill.pixiv_token }}">
+            <button type="submit" class="btn btn-outline-secondary">保存する</button>
+          </div>
+          <div class="form-text">空のまま保存すると設定を削除します。</div>
+        </form>
+      </div>
+    </details>
   </div>
 </div>
 </body></html>
@@ -351,6 +396,7 @@ def index():
         error=request.args.get("error"),
         cookies_saved=request.args.get("cookies_saved") == "1",
         pixiv_saved=request.args.get("pixiv_saved") == "1",
+        pixiv_error=request.args.get("pixiv_error"),
     )
 
 
@@ -380,6 +426,75 @@ def save_cookies():
 def save_pixiv_token():
     token = request.form.get("pixiv_token", "").strip()
     upsert_env_value("PIXIV_REFRESH_TOKEN", token)
+    return redirect("/?pixiv_saved=1")
+
+
+@app.route("/pixiv-oauth/start")
+def pixiv_oauth_start():
+    """PKCE コードを生成して Pixiv 認証 URL を返す。"""
+    from flask import session
+
+    code_verifier = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode()
+    code_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(code_verifier.encode()).digest()
+    ).rstrip(b"=").decode()
+    session["pixiv_code_verifier"] = code_verifier
+
+    auth_url = (
+        "https://app-api.pixiv.net/web/v1/login"
+        f"?code_challenge={code_challenge}"
+        "&code_challenge_method=S256"
+        f"&client_id={_PIXIV_CLIENT_ID}"
+        "&response_type=code"
+        f"&redirect_uri={urllib.parse.quote(_PIXIV_REDIRECT_URI, safe='')}"
+    )
+    return json.dumps({"auth_url": auth_url}), 200, {"Content-Type": "application/json"}
+
+
+@app.route("/pixiv-oauth/exchange", methods=["POST"])
+def pixiv_oauth_exchange():
+    """コールバック URL からコードを取り出してリフレッシュトークンに交換する。"""
+    from flask import session
+
+    callback_url = request.form.get("callback_url", "").strip()
+    code_verifier = session.pop("pixiv_code_verifier", None)
+
+    if not code_verifier:
+        return redirect("/?pixiv_error=セッションが切れました。もう一度やり直してください。")
+
+    params = urllib.parse.parse_qs(urllib.parse.urlparse(callback_url).query)
+    codes = params.get("code", [])
+    if not codes:
+        return redirect("/?pixiv_error=URL+から+code+を取得できませんでした。正しい URL を貼り付けてください。")
+
+    data = urllib.parse.urlencode({
+        "client_id": _PIXIV_CLIENT_ID,
+        "client_secret": _PIXIV_CLIENT_SECRET,
+        "code": codes[0],
+        "code_verifier": code_verifier,
+        "grant_type": "authorization_code",
+        "include_policy": "true",
+        "redirect_uri": _PIXIV_REDIRECT_URI,
+    }).encode()
+
+    req = urllib.request.Request(
+        "https://oauth.secure.pixiv.net/auth/token",
+        data=data,
+        headers={"User-Agent": "PixivIOSApp/7.13.3 (iOS 14.6; iPhone13,2)"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            token_data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return redirect(f"/?pixiv_error=トークン取得失敗 (HTTP+{e.code})")
+    except Exception as e:
+        return redirect(f"/?pixiv_error=トークン取得失敗:+{e}")
+
+    refresh_token = token_data.get("refresh_token")
+    if not refresh_token:
+        return redirect("/?pixiv_error=refresh_token+が応答に含まれていませんでした。")
+
+    upsert_env_value("PIXIV_REFRESH_TOKEN", refresh_token)
     return redirect("/?pixiv_saved=1")
 
 
