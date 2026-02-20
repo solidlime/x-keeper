@@ -5,6 +5,7 @@ Google Keep をポーリングして X (Twitter) の画像を保存するメイ�
 
 import logging
 import sys
+import threading
 import time
 
 from .config import Settings
@@ -12,6 +13,7 @@ from .image_downloader import ImageDownloader
 from .keep_client import KeepClient
 from .models import ProcessResult
 from .twitter_client import TwitterClient
+from .web_setup import app as _setup_app
 
 
 def _reconfigure_stdout_encoding() -> None:
@@ -224,6 +226,19 @@ def main() -> None:
 
     logger = logging.getLogger(__name__)
     logger.info("keep-image-saver を起動します")
+
+    # Web セットアップサーバーをデーモンスレッドで起動
+    threading.Thread(
+        target=_setup_app.run,
+        kwargs={
+            "host": "0.0.0.0",
+            "port": settings.web_setup_port,
+            "debug": False,
+            "use_reloader": False,
+        },
+        daemon=True,
+    ).start()
+    logger.info("Web セットアップサーバーを起動しました (http://localhost:%d)", settings.web_setup_port)
 
     logger.info(
         "設定: poll_interval=%ds, save_path=%s",

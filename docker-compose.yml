@@ -17,9 +17,14 @@ services:
     env_file:
       - .env
 
+    ports:
+      - "0.0.0.0:${WEB_SETUP_PORT:-8989}:${WEB_SETUP_PORT:-8989}"
+
     environment:
       # コンテナ内の Python stdout/stderr を UTF-8 に固定する (ログ文字化け対策)
       PYTHONUTF8: "1"
+      # ローカル HTTP での OAuth2 フローを許可
+      OAUTHLIB_INSECURE_TRANSPORT: "1"
 
     volumes:
       # .env をマウントすることでセットアップコマンドの書き込みがホストに反映される
@@ -45,41 +50,3 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # ── Web セットアップサーバー ──────────────────────────────────────────────
-  # Google OAuth2 認証情報をブラウザ経由で設定するためのサービス。
-  # メインサービスと並行して常時起動する。
-  # ブラウザで http://<ホストIP>:8989 を開いてセットアップを進める。
-  setup:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: runtime
-
-    image: ${DOCKER_IMAGE:-ghcr.io/solidlime/x-keeper:latest}
-
-    container_name: keep-image-saver-setup
-
-    command: ["python", "-m", "src.web_setup"]
-
-    restart: unless-stopped
-
-    env_file:
-      - .env
-
-    ports:
-      - "0.0.0.0:${WEB_SETUP_PORT:-8989}:${WEB_SETUP_PORT:-8989}"
-
-    environment:
-      PYTHONUTF8: "1"
-      # ローカル HTTP での OAuth2 フローを許可 (セットアップ専用サービスのみ)
-      OAUTHLIB_INSECURE_TRANSPORT: "1"
-
-    volumes:
-      # .env をマウントして書き込み結果をホストに反映する
-      - ./.env:/app/.env
-
-    # リソース制限 (セットアップ専用なので最小限)
-    deploy:
-      resources:
-        limits:
-          memory: 128M
