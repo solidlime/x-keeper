@@ -80,14 +80,19 @@ class TwitterClient:
         visited: set[str],
         tweet_urls: list[str],
         depth: int,
+        author_filter: str | None = None,
     ) -> None:
         """指定された URL のツイートを収集し、reply_id を辿って親ツイートへ再帰する。
+
+        depth=0 (起点ツイート) の著者を author_filter として記録し、
+        異なる著者のツイートに到達した時点で遡りを止める。
 
         Args:
             url: 処理対象のツイート URL。
             visited: 処理済み tweet_id のセット (重複排除)。
             tweet_urls: URL を追記するリスト。
             depth: 現在の再帰深度。
+            author_filter: 収集対象の著者名。None の場合は起点ツイートから取得する。
         """
         if depth >= _MAX_THREAD_DEPTH:
             logger.warning(
@@ -100,28 +105,41 @@ class TwitterClient:
         if tweet_id in visited:
             return
         visited.add(tweet_id)
+
+        reply_id, author_name = self._get_tweet_info(url)
+
+        # 起点ツイートの著者を filter として確定する
+        if author_filter is None:
+            author_filter = author_name
+            logger.debug("著者フィルターを設定: %s", author_filter)
+        elif author_name and author_name != author_filter:
+            logger.info(
+                "別ユーザーのツイートでスレッド遡りを停止: tweet_id=%s, author=%s (filter=%s)",
+                tweet_id, author_name, author_filter,
+            )
+            return
+
         tweet_urls.append(url)
         logger.debug("ツイートを追加しました: tweet_id=%s (depth=%d)", tweet_id, depth)
 
-        reply_to = self._get_reply_to_id(url)
-        if reply_to is None:
+        if reply_id is None:
             return
 
         # /i/status/{id} 形式は認証なしでもアクセス可能
-        parent_url = f"https://x.com/i/status/{reply_to}"
+        parent_url = f"https://x.com/i/status/{reply_id}"
         logger.debug(
-            "親ツイートを発見しました: tweet_id=%s -> reply_to=%s", tweet_id, reply_to
+            "親ツイートを発見しました: tweet_id=%s -> reply_to=%s", tweet_id, reply_id
         )
-        self._collect_thread_urls(parent_url, visited, tweet_urls, depth + 1)
+        self._collect_thread_urls(parent_url, visited, tweet_urls, depth + 1, author_filter)
 
-    def _get_reply_to_id(self, url: str) -> str | None:
-        """gallery-dl --dump-json で取得したメタデータから reply_to の tweet ID を返す。
+    def _get_tweet_info(self, url: str) -> tuple[str | None, str | None]:
+        """gallery-dl --dump-json で取得したメタデータから reply_id と author_name を返す。
 
         Args:
             url: メタデータを取得するツイートの URL。
 
         Returns:
-            reply_to の tweet ID 文字列。リプライ元がない場合は None。
+            (reply_id, author_name) のタプル。取得できない場合は None。
 
         Raises:
             RuntimeError: gallery-dl の実行がタイムアウトした場合。
@@ -151,7 +169,7 @@ class TwitterClient:
                 result.stderr.strip(),
             )
 
-        return _parse_reply_to(result.stdout)
+        return _parse_tweet_info(result.stdout)
 
 
 # ── module-level helpers ──────────────────────────────────────────────────────
@@ -201,19 +219,19 @@ def _extract_tweet_id(url: str) -> str:
     raise ValueError(f"URL から tweet ID を抽出できませんでした: url={url}")
 
 
-def _parse_reply_to(stdout: str) -> str | None:
-    """gallery-dl の --dump-json 出力から reply_to フィールドの tweet ID を返す。
+def _parse_tweet_info(stdout: str) -> tuple[str | None, str | None]:
+    """gallery-dl の --dump-json 出力から reply_id と author_name を返す。
 
     gallery-dl の JSON 行フォーマット: [msg_type, url_or_zero, metadata_dict]
     - msg_type=1: バージョン情報 (無視)
-    - msg_type=2: ダウンロード対象アイテム → metadata_dict に reply_to が含まれる
+    - msg_type=2: ダウンロード対象アイテム → metadata_dict にフィールドが含まれる
     - msg_type=4: エラー (無視)
 
     Args:
         stdout: gallery-dl の標準出力。
 
     Returns:
-        reply_to の tweet ID 文字列。見つからない場合は None。
+        (reply_id, author_name) のタプル。取得できない場合は None。
     """
     for line in stdout.splitlines():
         line = line.strip()
@@ -235,10 +253,21 @@ def _parse_reply_to(stdout: str) -> str | None:
         if metadata is None:
             continue
 
+        # author_name を取得
+        author_name: str | None = None
+        author = metadata.get("author")
+        if isinstance(author, dict):
+            author_name = author.get("name")
+
         # reply_id はツイートID整数 (0 = ルートツイート、非0 = 親ツイートのID)
         # reply_to はリプライ先のユーザー名 (文字列) なので使用しないこと
-        reply_id = metadata.get("reply_id")
-        if reply_id is not None and int(reply_id) != 0:
-            return str(reply_id)
+        reply_id: str | None = None
+        reply_id_val = metadata.get("reply_id")
+        if reply_id_val is not None and int(reply_id_val) != 0:
+            reply_id = str(reply_id_val)
 
-    return None
+        # author_name が取得できたエントリで確定
+        if author_name is not None:
+            return reply_id, author_name
+
+    return None, None
