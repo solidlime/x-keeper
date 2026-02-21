@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_serena_serena__list_dir",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git pull:*)",
+      "Bash(git rebase:*)",
+      "Bash(git push:*)",
+      "Bash(pip show:*)",
+      "Bash(python -m venv:*)",
+      "Bash(.venv/Scripts/pip install:*)",
+      "Bash(OAUTHLIB_INSECURE_TRANSPORT=1 .venv/Scripts/python:*)",
+      "mcp__plugin_serena_serena__replace_symbol_body",
+      "Bash(python:*)",
+      "Bash(.venv/Scripts/python:*)",
+      "Bash(test:*)",
+      "mcp__plugin_serena_serena__get_symbols_overview",
+      "Bash(chmod:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebSearch",
+      "Bash(curl:*)",
+      "WebFetch(domain:github.com)",
+      "mcp__plugin_serena_serena__check_onboarding_performed",
+      "mcp__plugin_serena_serena__list_memories",
+      "mcp__plugin_serena_serena__activate_project",
+      "mcp__plugin_serena_serena__find_symbol",
+      "mcp__plugin_serena_serena__read_file",
+      "Bash(grep:*)",
+      "Bash(head:*)"
+    ]
+  }
+}

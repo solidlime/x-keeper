@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git -C \"D:/VSCode/x-keeper/.claude/worktrees/intelligent-borg\" status)",
+      "Bash(git -C \"D:/VSCode/x-keeper/.claude/worktrees/intelligent-borg\" diff HEAD -- docker-compose.yml src/config.py src/token_setup.py src/main.py .env.example)",
+      "Bash(git -C \"D:/VSCode/x-keeper\" worktree list)",
+      "Bash(git -C \"D:/VSCode/x-keeper\" diff HEAD -- docker-compose.yml src/config.py src/token_setup.py src/main.py .env.example)",
+      "Bash(git -C \"D:/VSCode/x-keeper\" status)",
+      "Bash(git -C \"D:/VSCode/x-keeper\" show HEAD --name-only)",
+      "Bash(git -C \"D:/VSCode/x-keeper\" show HEAD:docker-compose.yml)",
+      "Bash(git --git-dir=\"D:/VSCode/x-keeper/.git\" show HEAD:docker-compose.yml)",
+      "Bash(git -C \"D:/VSCode/x-keeper/.claude/worktrees/intelligent-borg\" log --oneline -5)",
+      "Bash(git -C \"D:/VSCode/x-keeper/.claude/worktrees/intelligent-borg\" diff HEAD)",
+      "Bash(git -C \"D:/VSCode/x-keeper/.claude/worktrees/intelligent-borg\" worktree list)",
+      "Bash(git -C \"D:/VSCode/x-keeper\" diff HEAD -- src/token_setup.py src/config.py src/main.py docker-compose.yml .env.example)",
+      "Bash(git -C \"D:/VSCode/x-keeper\" remote -v)",
+      "Bash(git -C \"D:/VSCode/x-keeper\" fetch --dry-run)",
+      "Bash(git -C \"D:/VSCode/x-keeper\" fetch origin)",
+      "Bash(git -C \"D:/VSCode/x-keeper\" log origin/main --oneline -8)",
+      "Bash(git -C \"D:/VSCode/x-keeper\" diff HEAD origin/main -- src/token_setup.py src/config.py src/main.py docker-compose.yml .env.example)",
+      "Bash(git -C \"D:/VSCode/x-keeper\" status --short src/token_setup.py src/config.py src/main.py docker-compose.yml .env.example)"
+    ]
+  }
+}

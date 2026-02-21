@@ -32,7 +32,6 @@ IMGUR_URL_PATTERN = re.compile(
 _REACTION_OK = "✅"
 _REACTION_PROCESSING = "⏳"
 _REACTION_ERROR = "❌"
-_RETRY_POLL_INTERVAL = 5  # 秒
 
 
 def _find_media_urls(content: str) -> list[str]:
@@ -51,6 +50,8 @@ class XKeeperBot(discord.Client):
         twitter: TwitterClient,
         downloader: MediaDownloader,
         log_store: LogStore,
+        retry_poll_interval: int = 30,
+        scan_interval: int = 0,
     ) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
@@ -59,6 +60,8 @@ class XKeeperBot(discord.Client):
         self.twitter = twitter
         self.downloader = downloader
         self._log_store = log_store
+        self._retry_poll_interval = retry_poll_interval
+        self._scan_interval = scan_interval
 
     async def setup_hook(self) -> None:
         self.loop.create_task(self._retry_queue_task())
@@ -158,10 +161,20 @@ class XKeeperBot(discord.Client):
             logger.info("処理完了: message_id=%d, files=%d", message.id, total_files)
 
     async def _retry_queue_task(self) -> None:
-        """リトライキューを定期的にポーリングして処理する。"""
+        """リトライキューのポーリングと定期スキャンを行う。"""
         await self.wait_until_ready()
+        last_scan = asyncio.get_event_loop().time()
         while not self.is_closed():
-            await asyncio.sleep(_RETRY_POLL_INTERVAL)
+            await asyncio.sleep(self._retry_poll_interval)
+
+            # 定期スキャン (scan_interval > 0 の場合)
+            if self._scan_interval > 0:
+                now = asyncio.get_event_loop().time()
+                if now - last_scan >= self._scan_interval:
+                    last_scan = now
+                    logger.info("定期スキャンを開始します (間隔: %d 秒)", self._scan_interval)
+                    await self._scan_pending_messages()
+
             queued = self._log_store.pop_retry_queue()
             for item in queued:
                 channel = self.get_channel(item["channel_id"])

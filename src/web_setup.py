@@ -298,6 +298,48 @@ _INDEX_HTML = (
       </div>
     </details>
     {% endif %}
+
+    <hr class="my-4">
+
+    <!-- Bot 動作設定 -->
+    <h6 class="fw-bold">
+      Bot 動作設定
+      <span class="badge bg-secondary fw-normal ms-1">任意</span>
+    </h6>
+    <p class="small text-muted mb-3">
+      再試行・定期スキャンのタイミングを調整します。変更は Bot の再起動後に反映されます。
+    </p>
+
+    {% if bot_config_saved %}
+    <div class="alert alert-success py-2 small">Bot 動作設定を保存しました。</div>
+    {% endif %}
+
+    <form method="post" action="/save-bot-config">
+      <div class="mb-3">
+        <label class="form-label fw-semibold">リトライキュー処理間隔 (秒)</label>
+        <input type="number" class="form-control" name="retry_poll_interval"
+               min="5" max="300" value="{{ prefill.retry_poll_interval }}">
+        <div class="form-text">
+          Web UI の「リトライ」ボタンを押してから Bot が処理を開始するまでの最大待機時間。<br>
+          推奨: <code>30</code>（デフォルト）
+        </div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label fw-semibold">未処理メッセージの定期スキャン間隔</label>
+        <select class="form-select" name="scan_interval">
+          <option value="0"    {% if prefill.scan_interval == "0"     %}selected{% endif %}>起動時のみ（デフォルト）</option>
+          <option value="3600" {% if prefill.scan_interval == "3600"  %}selected{% endif %}>1 時間ごと</option>
+          <option value="10800"{% if prefill.scan_interval == "10800" %}selected{% endif %}>3 時間ごと</option>
+          <option value="21600"{% if prefill.scan_interval == "21600" %}selected{% endif %}>6 時間ごと</option>
+          <option value="86400"{% if prefill.scan_interval == "86400" %}selected{% endif %}>24 時間ごと</option>
+        </select>
+        <div class="form-text">
+          ✅ 未付与のメッセージを自動で再ダウンロードする頻度。<br>
+          「起動時のみ」は安全ですが、長期稼働時に取りこぼしが残ることがあります。
+        </div>
+      </div>
+      <button type="submit" class="btn btn-outline-primary">保存する</button>
+    </form>
   </div>
 </div>
 </body></html>
@@ -741,6 +783,8 @@ def _prefill_values() -> dict[str, str]:
         "channel_id": env.get("DISCORD_CHANNEL_ID", ""),
         "cookies_file": env.get("GALLERY_DL_COOKIES_FILE", ""),
         "pixiv_token": env.get("PIXIV_REFRESH_TOKEN", ""),
+        "retry_poll_interval": env.get("RETRY_POLL_INTERVAL", "30"),
+        "scan_interval": env.get("SCAN_INTERVAL", "0"),
     }
 
 
@@ -759,6 +803,7 @@ def index():
         pixiv_saved=request.args.get("pixiv_saved") == "1",
         pixiv_error=request.args.get("pixiv_error"),
         pixiv_auth_url=session.get("pixiv_auth_url"),
+        bot_config_saved=request.args.get("bot_config_saved") == "1",
     )
 
 
@@ -784,6 +829,17 @@ def save_cookies():
     cookies_file = request.form.get("cookies_file", "").strip()
     upsert_env_value("GALLERY_DL_COOKIES_FILE", cookies_file)
     return redirect("/?cookies_saved=1")
+
+
+@app.route("/save-bot-config", methods=["POST"])
+def save_bot_config():
+    retry_poll_interval = request.form.get("retry_poll_interval", "30").strip()
+    scan_interval = request.form.get("scan_interval", "0").strip()
+    if not retry_poll_interval.isdigit() or not scan_interval.isdigit():
+        return redirect("/?error=数値を入力してください")
+    upsert_env_value("RETRY_POLL_INTERVAL", retry_poll_interval)
+    upsert_env_value("SCAN_INTERVAL", scan_interval)
+    return redirect("/?bot_config_saved=1")
 
 
 @app.route("/save-pixiv-token", methods=["POST"])

@@ -112,7 +112,11 @@ async def async_main() -> None:
     )
 
     channel_ids = settings.channel_ids
-    bot = XKeeperBot(channel_ids, twitter, downloader, log_store)
+    bot = XKeeperBot(
+        channel_ids, twitter, downloader, log_store,
+        retry_poll_interval=settings.retry_poll_interval,
+        scan_interval=settings.scan_interval,
+    )
     logger.info("Discord Bot を起動します (チャンネル ID: %s)...", channel_ids)
     await bot.start(settings.discord_bot_token)
 
