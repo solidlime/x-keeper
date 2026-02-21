@@ -211,7 +211,7 @@ _INDEX_HTML = (
       <span class="badge bg-secondary fw-normal ms-1">任意</span>
     </h6>
     <p class="small text-muted mb-3">
-      Pixiv の画像をダウンロードするために必要です。Cookie ではなく OAuth トークンが必要です。
+      Pixiv の画像をダウンロードするために必要です。
     </p>
 
     {% if pixiv_saved %}
@@ -221,39 +221,38 @@ _INDEX_HTML = (
     <div class="alert alert-danger py-2 small">{{ pixiv_error }}</div>
     {% endif %}
 
-    <div class="alert alert-secondary small mb-2">
-      💡 <strong>すでに Pixiv にログイン済みの場合</strong>は
-      <strong>シークレット (プライベート) ウィンドウ</strong>で開いてください。<br>
-      そうしないと途中で止まるリダイレクトが発生することがあります。
+    {% if pixiv_auth_url %}
+    <div class="alert alert-info small mb-3">
+      <strong>手順:</strong>
+      <ol class="mb-2 ps-3 mt-1">
+        <li>F12 → <strong>[Network]</strong> タブを開く（まだなら）</li>
+        <li>別タブで Pixiv のログインページが開いています。ログインする</li>
+        <li>Network タブに <code>callback?state=...</code> という行が表示されたらクリック</li>
+        <li>Request URL 内の <code>code=</code> の値をコピーして下に貼り付ける</li>
+      </ol>
+      <span class="text-muted">コード値だけでも、URL ごとでも OK。コードはログインから <strong>30 秒</strong>で失効します。</span>
     </div>
-
-    <button type="button" class="btn btn-outline-danger mb-3" id="pixiv-login-btn"
+    <div class="mb-3">
+      <a href="{{ pixiv_auth_url }}" target="_blank" class="btn btn-sm btn-outline-secondary">
+        ログインページをもう一度開く
+      </a>
+    </div>
+    <form method="post" action="/pixiv-oauth/exchange">
+      <div class="input-group">
+        <input type="text" class="form-control font-monospace"
+               name="code" required autofocus
+               placeholder="code の値、または callback?state=...&code=... の URL">
+        <button type="submit" class="btn btn-primary">取得して保存</button>
+      </div>
+    </form>
+    <div class="mt-2">
+      <a href="/pixiv-oauth/cancel" class="small text-muted">← キャンセル</a>
+    </div>
+    {% else %}
+    <button type="button" class="btn btn-outline-danger mb-3"
             onclick="startPixivOAuth(this)">
-      Pixiv にログインしてトークンを取得（シークレットウィンドウで開く）
+      Pixiv でログインしてトークンを取得
     </button>
-    <div id="pixiv-callback-section" style="display:none">
-      <div class="alert alert-warning py-2 small mb-2">
-        ログイン後、アドレスバーに表示された URL をコピーして貼り付けてください。<br>
-        以下のいずれかであれば OK です:<br>
-        <strong><code>https://app-api.pixiv.net/…/callback?code=XXXXX…</code></strong><br>
-        <strong><code>pixiv://account/login?code=XXXXX…</code></strong>
-        <span class="d-block text-muted mt-1">（ページが真っ白・エラーでも OK。<code>?code=</code> が入っていれば成功）</span>
-      </div>
-      <div class="alert alert-secondary py-2 small mb-2">
-        途中で止まった URL も貼り付けてください。自動で対応します:<br>
-        <code>accounts.pixiv.net/post-redirect?…</code> → 次の手順を案内<br>
-        <code>app-api.pixiv.net/…/start?…</code> → ページが開いたら <code>pixiv://</code> URL を探してコピー
-      </div>
-      <form method="post" action="/pixiv-oauth/exchange">
-        <div class="input-group mb-1">
-          <input type="text" class="form-control form-control-sm font-monospace"
-                 name="callback_url" required
-                 placeholder="pixiv://account/login?code=... または callback?code=...">
-          <button type="submit" class="btn btn-primary btn-sm">取得して保存</button>
-        </div>
-      </form>
-    </div>
-
     <script>
     async function startPixivOAuth(btn) {
       btn.disabled = true;
@@ -262,17 +261,16 @@ _INDEX_HTML = (
         const res = await fetch('/pixiv-oauth/start');
         const data = await res.json();
         window.open(data.auth_url, '_blank');
-        document.getElementById('pixiv-callback-section').style.display = 'block';
-        btn.textContent = 'もう一度開く';
+        window.location.href = '/';
       } catch (e) {
         btn.textContent = 'エラーが発生しました。再試行してください。';
+        btn.disabled = false;
       }
-      btn.disabled = false;
     }
     </script>
 
-    <details class="mt-3">
-      <summary class="small text-muted">手動でトークンを入力する</summary>
+    <details class="mt-2">
+      <summary class="small text-muted">手動でトークンを直接入力する</summary>
       <div class="details-body">
         <form method="post" action="/save-pixiv-token">
           <div class="input-group mt-2">
@@ -286,60 +284,7 @@ _INDEX_HTML = (
         </form>
       </div>
     </details>
-  </div>
-</div>
-</body></html>
-"""
-)
-
-_PIXIV_CONTINUE_HTML = (
-    _BASE_STYLE
-    + """
-<div class="card shadow-sm">
-  <div class="card-body p-4">
-    <h5 class="card-title mb-3">Pixiv 認証 — ステップ 2/2</h5>
-
-    {% if "/start" in return_to_url or "/login" in return_to_url %}
-    <div class="alert alert-info small mb-3">
-      ログインは完了しています。下のボタンで新しいタブを開いてください。<br>
-      Pixiv アプリへのリダイレクトが走り、アドレスバーが<br>
-      <strong><code>pixiv://account/login?code=XXXXX…</code></strong><br>
-      に変わります。その URL をコピーして下のフォームに貼り付けてください。<br>
-      <span class="text-muted">（「このアドレスは開けません」などのエラー表示は正常です）</span>
-    </div>
-    {% else %}
-    <div class="alert alert-info small mb-3">
-      ログインは完了しています。<br>
-      下のボタンで<strong>認証の続き</strong>を新しいタブで開いてください。<br>
-      アドレスバーが <code>callback?code=…</code> または <code>pixiv://account/login?code=…</code> になったらコピーしてください。<br>
-      <span class="text-muted">（ページが真っ白やエラーでも OK）</span>
-    </div>
     {% endif %}
-
-    <form method="POST" action="{{ return_to_url }}" target="_blank" style="display:contents">
-      <button type="submit" class="btn btn-danger w-100 mb-4">
-        認証を続ける（新しいタブで開く）
-      </button>
-    </form>
-
-    <p class="small text-muted mb-1">
-      貼り付ける URL（どちらでも OK）:<br>
-      <code>pixiv://account/login?code=XXXXX…</code><br>
-      <code>https://app-api.pixiv.net/…/callback?code=XXXXX…</code>
-    </p>
-
-    <form method="post" action="/pixiv-oauth/exchange">
-      <div class="input-group">
-        <input type="text" class="form-control form-control-sm font-monospace"
-               name="callback_url" required
-               placeholder="pixiv://account/login?code=... または callback?code=...">
-        <button type="submit" class="btn btn-primary btn-sm">取得して保存</button>
-      </div>
-    </form>
-
-    <div class="mt-3">
-      <a href="/" class="small text-muted">← セットアップに戻る</a>
-    </div>
   </div>
 </div>
 </body></html>
@@ -464,6 +409,7 @@ def index():
         cookies_saved=request.args.get("cookies_saved") == "1",
         pixiv_saved=request.args.get("pixiv_saved") == "1",
         pixiv_error=request.args.get("pixiv_error"),
+        pixiv_auth_url=session.get("pixiv_auth_url"),
     )
 
 
@@ -498,58 +444,64 @@ def save_pixiv_token():
 
 @app.route("/pixiv-oauth/start")
 def pixiv_oauth_start():
-    """PKCE コードを生成して Pixiv 認証 URL を返す。"""
-    # gallery-dl と同じ方法で生成 (hex 文字列)
+    """PKCE を生成してセッションに保存し、認証 URL を JSON で返す。"""
     code_verifier = os.urandom(32).hex()
     digest = hashlib.sha256(code_verifier.encode()).digest()
-    code_challenge = base64.b64encode(digest)[:-1].decode().replace("+", "-").replace("/", "_")
+    code_challenge = (
+        base64.b64encode(digest)[:-1]
+        .decode()
+        .replace("+", "-")
+        .replace("/", "_")
+    )
     session["pixiv_code_verifier"] = code_verifier
-
-    # gallery-dl の oauth.py に合わせたパラメーター
     auth_url = (
         "https://app-api.pixiv.net/web/v1/login"
         f"?code_challenge={code_challenge}"
         "&code_challenge_method=S256"
         "&client=pixiv-android"
     )
+    session["pixiv_auth_url"] = auth_url
     return json.dumps({"auth_url": auth_url}), 200, {"Content-Type": "application/json"}
+
+
+@app.route("/pixiv-oauth/cancel")
+def pixiv_oauth_cancel():
+    """セッションをクリアしてトップに戻る。"""
+    session.pop("pixiv_code_verifier", None)
+    session.pop("pixiv_auth_url", None)
+    return redirect("/")
 
 
 @app.route("/pixiv-oauth/exchange", methods=["POST"])
 def pixiv_oauth_exchange():
-    """コールバック URL からコードを取り出してリフレッシュトークンに交換する。"""
-    callback_url = request.form.get("callback_url", "").strip()
+    """code 値または URL からコードを抽出してリフレッシュトークンに交換する。"""
+    raw = request.form.get("code", "").strip()
     code_verifier = session.get("pixiv_code_verifier")
 
     if not code_verifier:
-        return redirect("/?pixiv_error=セッションが切れました。もう一度やり直してください。")
+        msg = urllib.parse.quote("セッションが切れました。もう一度やり直してください。")
+        return redirect(f"/?pixiv_error={msg}")
 
-    parsed = urllib.parse.urlparse(callback_url)
+    # code 値・URL・クエリ文字列のいずれからでも抽出
+    code = None
+    if "?" not in raw and "code=" in raw:
+        raw = "?" + raw
+    parsed = urllib.parse.urlparse(raw)
     params = urllib.parse.parse_qs(parsed.query)
     codes = params.get("code", [])
+    if codes:
+        code = codes[0]
+    elif re.fullmatch(r"[A-Za-z0-9_\-]+", raw.lstrip("?")) and len(raw.lstrip("?")) > 10:
+        code = raw.lstrip("?")
 
-    # /start URL が貼られた場合 → 続行ページへ誘導（エラーで弾かない）
-    if not codes and ("/web/v1/login" in callback_url or "/auth/pixiv/start" in callback_url):
-        return render_template_string(_PIXIV_CONTINUE_HTML, return_to_url=callback_url)
-
-    # post-redirect URL が貼られた場合は return_to を取り出して中継ページへ
-    if not codes and ("post-redirect" in callback_url or "return_to" in params):
-        return_to = params.get("return_to", [""])[0]
-        if return_to:
-            return render_template_string(_PIXIV_CONTINUE_HTML, return_to_url=return_to)
-        msg = "URLを解析できませんでした。ページをリロードして最初からやり直してください。"
-        return redirect(f"/?pixiv_error={urllib.parse.quote(msg)}")
-
-    if not codes:
-        msg = "URLにcodeが含まれていません。アドレスバーのURLをそのままコピーしてください。"
-        return redirect(f"/?pixiv_error={urllib.parse.quote(msg)}")
-
-    session.pop("pixiv_code_verifier", None)
+    if not code:
+        msg = urllib.parse.quote("code が見つかりません。Network タブの callback?state=... の行から code= の値をコピーしてください。")
+        return redirect(f"/?pixiv_error={msg}")
 
     data = urllib.parse.urlencode({
         "client_id": _PIXIV_CLIENT_ID,
         "client_secret": _PIXIV_CLIENT_SECRET,
-        "code": codes[0],
+        "code": code,
         "code_verifier": code_verifier,
         "grant_type": "authorization_code",
         "include_policy": "true",
@@ -565,13 +517,20 @@ def pixiv_oauth_exchange():
         with urllib.request.urlopen(req, timeout=30) as resp:
             token_data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        return redirect(f"/?pixiv_error=トークン取得失敗 (HTTP+{e.code})")
+        msg = urllib.parse.quote(f"トークン取得失敗 (HTTP {e.code})")
+        return redirect(f"/?pixiv_error={msg}")
     except Exception as e:
-        return redirect(f"/?pixiv_error=トークン取得失敗:+{e}")
+        msg = urllib.parse.quote(f"トークン取得失敗: {e}")
+        return redirect(f"/?pixiv_error={msg}")
 
     refresh_token = token_data.get("refresh_token")
     if not refresh_token:
-        return redirect("/?pixiv_error=refresh_token+が応答に含まれていませんでした。")
+        msg = urllib.parse.quote("refresh_token が応答に含まれていませんでした。")
+        return redirect(f"/?pixiv_error={msg}")
+
+    # 成功時のみセッションをクリア
+    session.pop("pixiv_code_verifier", None)
+    session.pop("pixiv_auth_url", None)
 
     upsert_env_value("PIXIV_REFRESH_TOKEN", refresh_token)
     return redirect("/?pixiv_saved=1")
