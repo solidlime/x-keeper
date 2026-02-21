@@ -394,6 +394,19 @@ _GALLERY_DATE_HTML = (
 <style>
   .media-thumb { cursor:pointer; transition: opacity .15s; }
   .media-thumb:hover { opacity:.8; }
+  /* 削除ボタン */
+  .col.media-item { position:relative; }
+  .del-btn {
+    position:absolute; top:.3rem; right:.3rem; z-index:20;
+    background:rgba(220,53,69,.85); color:#fff; border:none;
+    border-radius:50%; width:1.7rem; height:1.7rem;
+    font-size:.85rem; cursor:pointer; opacity:0;
+    transition: opacity .15s; display:flex; align-items:center; justify-content:center;
+    line-height:1;
+  }
+  .col.media-item:hover .del-btn { opacity:1; }
+  .col.media-item.deleting { opacity:0; transform:scale(.88); transition: opacity .25s, transform .25s; }
+  /* ライトボックス */
   #lb-backdrop {
     display:none; position:fixed; inset:0; background:rgba(0,0,0,.88);
     z-index:1050; align-items:center; justify-content:center; flex-direction:column;
@@ -404,6 +417,8 @@ _GALLERY_DATE_HTML = (
                 overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #lb-close  { position:fixed; top:1rem; right:1.25rem; font-size:2rem;
                color:#fff; cursor:pointer; line-height:1; z-index:1060; }
+  #lb-delete { position:fixed; top:1rem; right:3.25rem; font-size:1.5rem;
+               color:#f88; cursor:pointer; line-height:1; z-index:1060; }
   #lb-prev, #lb-next {
     position:fixed; top:50%; transform:translateY(-50%);
     font-size:2.5rem; color:#fff; cursor:pointer; z-index:1060;
@@ -429,14 +444,16 @@ _GALLERY_DATE_HTML = (
   <div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 row-cols-lg-5 g-2" id="file-grid">
     {% for f in files %}
     <div class="col media-item" data-name="{{ f.name }}">
+      <button class="del-btn" data-path="{{ f.path }}" title="削除">🗑</button>
       {% if f.type == "image" %}
       <img src="/media/{{ f.path }}" class="rounded media-thumb"
            style="width:100%;aspect-ratio:1/1;object-fit:cover"
            data-src="/media/{{ f.path }}" data-type="image" data-caption="{{ f.name }}"
-           alt="{{ f.name }}">
+           data-path="{{ f.path }}" alt="{{ f.name }}">
       {% elif f.type == "video" %}
       <div class="position-relative media-thumb"
            data-src="/media/{{ f.path }}" data-type="video" data-caption="{{ f.name }}"
+           data-path="{{ f.path }}"
            style="aspect-ratio:16/9;background:#000;border-radius:.375rem;overflow:hidden">
         <video muted preload="metadata"
                style="width:100%;height:100%;object-fit:cover;pointer-events:none">
@@ -465,12 +482,13 @@ _GALLERY_DATE_HTML = (
 
 <!-- ライトボックス -->
 <div id="lb-backdrop">
-  <span id="lb-close" title="閉じる (Esc)">✕</span>
-  <span id="lb-prev" title="前へ (←)">‹</span>
-  <span id="lb-next" title="次へ (→)">›</span>
+  <span id="lb-close"  title="閉じる (Esc)">✕</span>
+  <span id="lb-delete" title="削除 (Del)">🗑</span>
+  <span id="lb-prev"   title="前へ (←)">‹</span>
+  <span id="lb-next"   title="次へ (→)">›</span>
   <div id="lb-content"></div>
   <div id="lb-caption"></div>
-  <div id="lb-hint">ホイール / ピンチ: ズーム　ダブルクリック: リセット</div>
+  <div id="lb-hint">ホイール / ピンチ: ズーム　ダブルクリック: リセット　Del: 削除</div>
 </div>
 
 <script>
@@ -543,6 +561,40 @@ _GALLERY_DATE_HTML = (
 
   function move(delta) { open(cur + delta); }
 
+  // ── 削除 ──────────────────────────────────────────────────────────────────
+  async function deleteFile(path, onSuccess) {
+    const name = path.split('/').pop();
+    if (!confirm(`「${name}」を削除しますか？\nこの操作は取り消せません。`)) return;
+    try {
+      const res = await fetch('/delete-media', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'path=' + encodeURIComponent(path),
+      });
+      if (!res.ok) { alert('削除に失敗しました'); return; }
+      onSuccess();
+    } catch (e) {
+      alert('削除に失敗しました: ' + e);
+    }
+  }
+
+  // サムネイル削除ボタン
+  document.querySelectorAll('.del-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const item = btn.closest('.media-item');
+      const thumb = item.querySelector('.media-thumb');
+      deleteFile(btn.dataset.path, () => {
+        if (thumb) {
+          const idx = thumbs.indexOf(thumb);
+          if (idx !== -1) thumbs.splice(idx, 1);
+        }
+        item.classList.add('deleting');
+        setTimeout(() => item.remove(), 280);
+      });
+    });
+  });
+
   thumbs.forEach(el => {
     el.addEventListener('click', () => open(visibleThumbs().indexOf(el)));
   });
@@ -550,6 +602,22 @@ _GALLERY_DATE_HTML = (
   document.getElementById('lb-close').addEventListener('click', close);
   document.getElementById('lb-prev').addEventListener('click', () => move(-1));
   document.getElementById('lb-next').addEventListener('click', () => move(1));
+
+  // ライトボックス削除ボタン
+  document.getElementById('lb-delete').addEventListener('click', () => {
+    const vt = visibleThumbs();
+    if (!vt.length) return;
+    const el = vt[cur];
+    const path = el.dataset.path;
+    const item = el.closest('.media-item');
+    deleteFile(path, () => {
+      const idx = thumbs.indexOf(el);
+      if (idx !== -1) thumbs.splice(idx, 1);
+      close();
+      item.classList.add('deleting');
+      setTimeout(() => item.remove(), 280);
+    });
+  });
 
   backdrop.addEventListener('click', e => {
     if (closeCancelled) { closeCancelled = false; return; }
@@ -562,6 +630,7 @@ _GALLERY_DATE_HTML = (
     if (e.key === 'ArrowLeft')  move(-1);
     if (e.key === 'ArrowRight') move(1);
     if (e.key === '0') resetZoom();
+    if (e.key === 'Delete') document.getElementById('lb-delete').click();
   });
 
   // ── ホイールズーム ────────────────────────────────────────────────────────
@@ -975,6 +1044,23 @@ def gallery_date(date_str: str):
 @app.route("/media/<path:filepath>")
 def serve_media(filepath: str):
     return send_from_directory(_SAVE_PATH, filepath)
+
+
+@app.route("/delete-media", methods=["POST"])
+def delete_media():
+    filepath = request.form.get("path", "").strip()
+    # パストラバーサル対策: SAVE_PATH 配下のみ許可
+    try:
+        target = (Path(_SAVE_PATH) / filepath).resolve()
+        save_root = Path(_SAVE_PATH).resolve()
+    except Exception:
+        return "invalid path", 400
+    if save_root not in target.parents and target != save_root:
+        return "forbidden", 403
+    if not target.is_file():
+        return "not found", 404
+    target.unlink()
+    return "ok", 200
 
 
 @app.route("/gallery/search")
