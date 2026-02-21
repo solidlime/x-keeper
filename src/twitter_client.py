@@ -108,10 +108,11 @@ class TwitterClient:
 
         reply_id, author_name = self._get_tweet_info(url)
 
-        # 起点ツイートの著者を filter として確定する
+        # 起点ツイートの著者を filter として確定し、URL を追加する
         if author_filter is None:
             author_filter = author_name
-            logger.debug("著者フィルターを設定: %s", author_filter)
+            tweet_urls.append(url)
+            logger.debug("著者フィルターを設定: %s (tweet_id=%s)", author_filter, tweet_id)
         elif author_name and author_name != author_filter:
             logger.info(
                 "別ユーザーのツイートをスキップ: tweet_id=%s, author=%s (filter=%s)",
@@ -221,10 +222,11 @@ def _extract_tweet_id(url: str) -> str:
 def _parse_tweet_info(stdout: str) -> tuple[str | None, str | None]:
     """gallery-dl の --dump-json 出力から reply_id と author_name を返す。
 
-    gallery-dl の JSON 行フォーマット: [msg_type, url_or_zero, metadata_dict]
-    - msg_type=1: バージョン情報 (無視)
-    - msg_type=2: ダウンロード対象アイテム → metadata_dict にフィールドが含まれる
-    - msg_type=4: エラー (無視)
+    gallery-dl の JSON フォーマット (新形式):
+      stdout 全体が1つの JSON 配列 [[type, metadata], [type, url, metadata], ...]
+      - type=2: ツイートメタデータ           [2, {author, reply_id, ...}]
+      - type=3: ダウンロード対象ファイル     [3, "url", {author, reply_id, ...}]
+      どちらも最後の要素がメタデータ dict。
 
     Args:
         stdout: gallery-dl の標準出力。
@@ -232,40 +234,38 @@ def _parse_tweet_info(stdout: str) -> tuple[str | None, str | None]:
     Returns:
         (reply_id, author_name) のタプル。取得できない場合は None。
     """
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line:
+    stdout = stdout.strip()
+    if not stdout:
+        return None, None
+
+    try:
+        top = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None, None
+
+    if not isinstance(top, list):
+        return None, None
+
+    for item in top:
+        if not isinstance(item, list) or len(item) < 2:
             continue
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
+        # type=2: [2, metadata]  /  type=3: [3, url_string, metadata]
+        # どちらも最後の要素がメタデータ dict
+        metadata = item[-1]
+        if not isinstance(metadata, dict):
             continue
 
-        # [msg_type, url_or_zero, {metadata}] の形式を想定
-        metadata: dict | None = None
-        if isinstance(data, list) and len(data) >= 3 and isinstance(data[2], dict):
-            metadata = data[2]
-        elif isinstance(data, dict):
-            # 将来の gallery-dl バージョンで形式が変わった場合のフォールバック
-            metadata = data
-
-        if metadata is None:
-            continue
-
-        # author_name を取得
         author_name: str | None = None
         author = metadata.get("author")
         if isinstance(author, dict):
             author_name = author.get("name")
 
         # reply_id はツイートID整数 (0 = ルートツイート、非0 = 親ツイートのID)
-        # reply_to はリプライ先のユーザー名 (文字列) なので使用しないこと
         reply_id: str | None = None
         reply_id_val = metadata.get("reply_id")
         if reply_id_val is not None and int(reply_id_val) != 0:
             reply_id = str(reply_id_val)
 
-        # author_name が取得できたエントリで確定
         if author_name is not None:
             return reply_id, author_name
 
