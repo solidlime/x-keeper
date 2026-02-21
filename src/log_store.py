@@ -1,0 +1,119 @@
+"""ダウンロードログと失敗リトライキューの永続化ストア。"""
+
+import json
+import threading
+from datetime import datetime
+from pathlib import Path
+
+
+class LogStore:
+    """ダウンロード結果を JSON ファイルに記録し、リトライキューを管理する。"""
+
+    _MAX_LOG_ENTRIES = 500
+
+    def __init__(self, data_dir: str | Path) -> None:
+        self._data_dir = Path(data_dir)
+        self._data_dir.mkdir(parents=True, exist_ok=True)
+        self._log_file = self._data_dir / "_download_log.json"
+        self._retry_file = self._data_dir / "_retry_queue.json"
+        self._lock = threading.Lock()
+
+    # ── 内部ユーティリティ ────────────────────────────────────────────────────
+
+    def _read(self, path: Path) -> list[dict]:
+        if not path.exists():
+            return []
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+
+    def _write(self, path: Path, data: list) -> None:
+        path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _append_log(self, entry: dict) -> None:
+        with self._lock:
+            logs = self._read(self._log_file)
+            logs.append(entry)
+            if len(logs) > self._MAX_LOG_ENTRIES:
+                logs = logs[-self._MAX_LOG_ENTRIES :]
+            self._write(self._log_file, logs)
+
+    # ── ログ書き込み ──────────────────────────────────────────────────────────
+
+    def append_success(
+        self,
+        message_id: int,
+        channel_id: int,
+        urls: list[str],
+        file_count: int,
+    ) -> None:
+        self._append_log({
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "status": "success",
+            "message_id": message_id,
+            "channel_id": channel_id,
+            "urls": urls,
+            "file_count": file_count,
+        })
+
+    def append_failure(
+        self,
+        message_id: int,
+        channel_id: int,
+        urls: list[str],
+        error: str,
+    ) -> None:
+        self._append_log({
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "status": "failure",
+            "message_id": message_id,
+            "channel_id": channel_id,
+            "urls": urls,
+            "error": error,
+        })
+
+    # ── ログ読み出し ──────────────────────────────────────────────────────────
+
+    def get_recent_logs(self, limit: int = 100) -> list[dict]:
+        with self._lock:
+            logs = self._read(self._log_file)
+        return list(reversed(logs[-limit:]))
+
+    def get_failures(self) -> list[dict]:
+        """message_id ごとに最新エントリが failure のものだけ返す。"""
+        with self._lock:
+            logs = self._read(self._log_file)
+        seen: set[int] = set()
+        result = []
+        for entry in reversed(logs):
+            mid = entry.get("message_id")
+            if mid in seen:
+                continue
+            seen.add(mid)
+            if entry.get("status") == "failure":
+                result.append(entry)
+        return result
+
+    # ── リトライキュー ────────────────────────────────────────────────────────
+
+    def queue_retry(self, message_id: int, channel_id: int) -> None:
+        with self._lock:
+            queue = self._read(self._retry_file)
+            if not any(
+                e["message_id"] == message_id and e["channel_id"] == channel_id
+                for e in queue
+            ):
+                queue.append({"message_id": message_id, "channel_id": channel_id})
+                self._write(self._retry_file, queue)
+
+    def pop_retry_queue(self) -> list[dict]:
+        """キュー全件を取り出してクリアする。"""
+        with self._lock:
+            queue = self._read(self._retry_file)
+            if queue:
+                self._write(self._retry_file, [])
+        return queue

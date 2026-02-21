@@ -2,17 +2,19 @@
 Discord Bot - X (Twitter) / Pixiv メディアダウンローダー。
 
 監視チャンネルに X/Twitter または Pixiv の URL が投稿されると自動的にメディアをダウンロードし、
-✅ リアクションで処理済みを示す。エラー時はリアクションなし (次回再試行)。
+✅ リアクションで処理済みを示す。エラー時は ❌ リアクションを付けて次回再試行。
 
 起動時に未処理の過去メッセージ (最新 100 件) もスキャンして処理する。
 """
 
+import asyncio
 import logging
 import re
 
 import discord
 
 from .image_downloader import MediaDownloader
+from .log_store import LogStore
 from .twitter_client import TwitterClient
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,8 @@ PIXIV_URL_PATTERN = re.compile(
 
 _REACTION_OK = "✅"
 _REACTION_PROCESSING = "⏳"
+_REACTION_ERROR = "❌"
+_RETRY_POLL_INTERVAL = 5  # 秒
 
 
 def _find_media_urls(content: str) -> list[str]:
@@ -36,35 +40,38 @@ def _find_media_urls(content: str) -> list[str]:
 class XKeeperBot(discord.Client):
     def __init__(
         self,
-        channel_id: int,
+        channel_ids: list[int],
         twitter: TwitterClient,
         downloader: MediaDownloader,
+        log_store: LogStore,
     ) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
         super().__init__(intents=intents)
-        self.channel_id = channel_id
+        self.channel_ids = channel_ids
         self.twitter = twitter
         self.downloader = downloader
+        self._log_store = log_store
+
+    async def setup_hook(self) -> None:
+        self.loop.create_task(self._retry_queue_task())
 
     async def on_ready(self) -> None:
         logger.info("Discord Bot 起動: %s (ID: %s)", self.user, self.user.id)
-        channel = self.get_channel(self.channel_id)
-        if channel is None:
-            logger.error(
-                "チャンネルが見つかりません (channel_id=%d)。"
-                "以下を確認してください:\n"
-                "  1. DISCORD_CHANNEL_ID が正しいか\n"
-                "  2. Bot がそのサーバーに招待されているか\n"
-                "  3. Bot にチャンネルの閲覧権限があるか",
-                self.channel_id,
-            )
-            return
-        logger.info("監視チャンネル: #%s (id=%d)", channel.name, channel.id)
+        for channel_id in self.channel_ids:
+            channel = self.get_channel(channel_id)
+            if channel is None:
+                logger.error(
+                    "チャンネルが見つかりません (channel_id=%d)。"
+                    "DISCORD_CHANNEL_ID / Bot の招待状態を確認してください。",
+                    channel_id,
+                )
+            else:
+                logger.info("監視チャンネル: #%s (id=%d)", channel.name, channel.id)
         await self._scan_pending_messages()
 
     async def on_message(self, message: discord.Message) -> None:
-        if message.channel.id != self.channel_id:
+        if message.channel.id not in self.channel_ids:
             return
         if message.author.bot:
             return
@@ -73,22 +80,22 @@ class XKeeperBot(discord.Client):
         await self._process_message(message)
 
     async def _scan_pending_messages(self) -> None:
-        """起動時に未処理の過去メッセージを処理する (最新 100 件)。"""
-        channel = self.get_channel(self.channel_id)
-        if channel is None:
-            return  # on_ready でエラー済み
-
-        logger.info("未処理メッセージをスキャンしています...")
-        async for message in channel.history(limit=100):
-            if message.author.bot:
+        """起動時に未処理の過去メッセージを処理する (チャンネルごとに最新 100 件)。"""
+        for channel_id in self.channel_ids:
+            channel = self.get_channel(channel_id)
+            if channel is None:
                 continue
-            reactions = [str(r.emoji) for r in message.reactions]
-            if _REACTION_OK in reactions:
-                continue
-            if not _find_media_urls(message.content):
-                continue
-            logger.info("未処理メッセージを発見: message_id=%d", message.id)
-            await self._process_message(message)
+            logger.info("未処理メッセージをスキャン: #%s", channel.name)
+            async for message in channel.history(limit=100):
+                if message.author.bot:
+                    continue
+                reactions = [str(r.emoji) for r in message.reactions]
+                if _REACTION_OK in reactions:
+                    continue
+                if not _find_media_urls(message.content):
+                    continue
+                logger.info("未処理メッセージを発見: message_id=%d", message.id)
+                await self._process_message(message)
 
     async def _process_message(self, message: discord.Message) -> None:
         urls = _find_media_urls(message.content)
@@ -96,23 +103,26 @@ class XKeeperBot(discord.Client):
 
         await message.add_reaction(_REACTION_PROCESSING)
 
-        errors = []
+        errors: list[str] = []
+        total_files = 0
         for url in urls:
             try:
                 if PIXIV_URL_PATTERN.search(url):
-                    # Pixiv: そのまま直接ダウンロード
                     saved = self.downloader.download_direct([url])
                     if not saved:
-                        errors.append(f"ダウンロード失敗 (ファイルが保存されませんでした): url={url}")
+                        errors.append(f"ダウンロード失敗 (ファイルなし): {url}")
+                    else:
+                        total_files += len(saved)
                 else:
-                    # X/Twitter: スレッドを遡って全ツイートをダウンロード
                     thread = self.twitter.get_thread(url)
                     if not thread.tweet_urls:
                         logger.info("メディアが見つかりませんでした: url=%s", url)
                         continue
                     saved = self.downloader.download_all(thread.tweet_urls)
                     if not saved:
-                        errors.append(f"ダウンロード失敗 (ファイルが保存されませんでした): url={url}")
+                        errors.append(f"ダウンロード失敗 (ファイルなし): {url}")
+                    else:
+                        total_files += len(saved)
             except Exception as exc:
                 logger.error("処理エラー: url=%s, error=%s", url, exc)
                 errors.append(str(exc))
@@ -123,11 +133,45 @@ class XKeeperBot(discord.Client):
             pass
 
         if errors:
-            logger.warning(
-                "処理失敗 (リアクションなし・次回再試行): message_id=%d, errors=%s",
-                message.id,
-                errors,
+            await message.add_reaction(_REACTION_ERROR)
+            self._log_store.append_failure(
+                message.id, message.channel.id, urls, "; ".join(errors)
             )
+            logger.warning("処理失敗: message_id=%d, errors=%s", message.id, errors)
         else:
+            # 以前の ❌ があれば削除してから ✅ を追加
+            try:
+                await message.remove_reaction(_REACTION_ERROR, self.user)
+            except discord.HTTPException:
+                pass
             await message.add_reaction(_REACTION_OK)
-            logger.info("処理完了: message_id=%d", message.id)
+            self._log_store.append_success(
+                message.id, message.channel.id, urls, total_files
+            )
+            logger.info("処理完了: message_id=%d, files=%d", message.id, total_files)
+
+    async def _retry_queue_task(self) -> None:
+        """リトライキューを定期的にポーリングして処理する。"""
+        await self.wait_until_ready()
+        while not self.is_closed():
+            await asyncio.sleep(_RETRY_POLL_INTERVAL)
+            queued = self._log_store.pop_retry_queue()
+            for item in queued:
+                channel = self.get_channel(item["channel_id"])
+                if channel is None:
+                    logger.warning(
+                        "リトライ対象チャンネルが見つかりません: channel_id=%d",
+                        item["channel_id"],
+                    )
+                    continue
+                try:
+                    message = await channel.fetch_message(item["message_id"])
+                    logger.info("リトライ処理: message_id=%d", item["message_id"])
+                    await self._process_message(message)
+                except discord.NotFound:
+                    logger.warning(
+                        "リトライ対象メッセージが見つかりません: message_id=%d",
+                        item["message_id"],
+                    )
+                except Exception as exc:
+                    logger.error("リトライ処理エラー: %s", exc)

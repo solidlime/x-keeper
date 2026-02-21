@@ -16,8 +16,11 @@ class Settings(BaseSettings):
     discord_bot_token: str | None = None
     """Discord Bot のトークン。Developer Portal から取得する。"""
 
-    discord_channel_id: int | None = None
-    """監視する Discord チャンネルの ID。"""
+    discord_channel_id: str | None = None
+    """監視する Discord チャンネルの ID。カンマ区切りで複数指定可。
+    例: 1234567890123456789
+    例: 1234567890123456789,9876543210987654321
+    """
 
     # ── X (Twitter) / gallery-dl ─────────────────────────────────────────────
     gallery_dl_cookies_file: str | None = None
@@ -29,8 +32,7 @@ class Settings(BaseSettings):
     pixiv_refresh_token: str | None = None
     """Pixiv の OAuth リフレッシュトークン。
 
-    `gallery-dl oauth:pixiv` または
-    `docker exec -it x-keeper gallery-dl oauth:pixiv` で取得する。
+    Web UI の Pixiv セクションから取得する。
     """
 
     # ── 保存先 ───────────────────────────────────────────────────────────────
@@ -44,6 +46,17 @@ class Settings(BaseSettings):
     # ── ロギング ──────────────────────────────────────────────────────────────
     log_level: str = "INFO"
     """ログレベル。DEBUG / INFO / WARNING / ERROR のいずれか。"""
+
+    @property
+    def channel_ids(self) -> list[int]:
+        """監視チャンネル ID のリスト。カンマ区切り文字列をパースして返す。"""
+        if not self.discord_channel_id:
+            return []
+        return [
+            int(x.strip())
+            for x in self.discord_channel_id.split(",")
+            if x.strip().isdigit()
+        ]
 
     model_config = SettingsConfigDict(
         env_file=".env",

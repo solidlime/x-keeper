@@ -1,5 +1,5 @@
 """
-Web サーバー。Discord セットアップ UI + /gallery メディアビューア。
+Web サーバー。Discord セットアップ UI + /gallery メディアビューア + ログ/失敗管理。
 
 起動方法:
     python -m src.web_setup
@@ -32,6 +32,14 @@ _ENV_FILE = Path(".env")
 _PIXIV_CLIENT_ID = "MOBrBDS8blbauoSck0ZfDbtuzpyT"
 _PIXIV_CLIENT_SECRET = "lsACyCD94FhDUtGTXi3QzcFE2uU1hqtDaKeqrdwj"
 _PIXIV_REDIRECT_URI = "https://app-api.pixiv.net/web/v1/users/auth/pixiv/callback"
+
+# LogStore — main.py から set_log_store() で注入される
+_log_store = None
+
+
+def set_log_store(store) -> None:
+    global _log_store
+    _log_store = store
 
 
 # ── .env ユーティリティ ────────────────────────────────────────────────────────
@@ -92,6 +100,8 @@ _BASE_STYLE = """
     <div class="navbar-nav flex-row gap-3">
       <a class="nav-link" href="/">セットアップ</a>
       <a class="nav-link" href="/gallery">ギャラリー</a>
+      <a class="nav-link" href="/logs">ログ</a>
+      <a class="nav-link" href="/failures">失敗</a>
     </div>
   </div>
 </nav>
@@ -169,7 +179,10 @@ _INDEX_HTML = (
                name="channel_id" required
                placeholder="1234567890123456789"
                value="{{ prefill.channel_id }}">
-        <div class="form-text">数字のみ。Discord の開発者モードでチャンネルを右クリックして取得。</div>
+        <div class="form-text">
+          数字のみ。複数チャンネルを監視する場合はカンマ区切りで入力。<br>
+          例: <code>111222333444555666,777888999000111222</code>
+        </div>
       </div>
       <button type="submit" class="btn btn-primary w-100">保存する</button>
     </form>
@@ -295,13 +308,20 @@ _GALLERY_INDEX_HTML = (
     _BASE_STYLE
     + """
 <div class="container" style="max-width:900px">
-  <h5 class="mb-3">ダウンロード済みメディア</h5>
+  <div class="d-flex align-items-center gap-3 mb-3">
+    <h5 class="mb-0">ダウンロード済みメディア</h5>
+    <span class="text-muted small">{{ dirs|length }} 日分</span>
+  </div>
+  <input type="text" id="date-search" class="form-control form-control-sm mb-3"
+         placeholder="日付で絞り込み　例: 2026-02">
   {% if not dirs %}
   <p class="text-muted">まだメディアがありません。</p>
   {% else %}
   <div class="list-group">
     {% for d in dirs %}
-    <a href="/gallery/{{ d.name }}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+    <a href="/gallery/{{ d.name }}"
+       class="list-group-item list-group-item-action d-flex justify-content-between align-items-center date-item"
+       data-date="{{ d.name }}">
       <span class="fw-semibold font-monospace">{{ d.name }}</span>
       <span class="badge bg-secondary rounded-pill">{{ d.count }} ファイル</span>
     </a>
@@ -309,6 +329,14 @@ _GALLERY_INDEX_HTML = (
   </div>
   {% endif %}
 </div>
+<script>
+document.getElementById('date-search').addEventListener('input', function() {
+  const q = this.value.toLowerCase();
+  document.querySelectorAll('.date-item').forEach(el => {
+    el.style.display = el.dataset.date.includes(q) ? '' : 'none';
+  });
+});
+</script>
 </body></html>
 """
 )
@@ -321,13 +349,15 @@ _GALLERY_DATE_HTML = (
     <a href="/gallery" class="btn btn-sm btn-outline-secondary">← 戻る</a>
     <h5 class="mb-0 font-monospace">{{ date }}</h5>
     <span class="text-muted small">{{ files|length }} ファイル</span>
+    <input type="text" id="file-search" class="form-control form-control-sm ms-auto"
+           style="max-width:220px" placeholder="ファイル名で絞り込み">
   </div>
   {% if not files %}
   <p class="text-muted">ファイルがありません。</p>
   {% else %}
-  <div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 row-cols-lg-5 g-2">
+  <div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 row-cols-lg-5 g-2" id="file-grid">
     {% for f in files %}
-    <div class="col">
+    <div class="col media-item" data-name="{{ f.name }}">
       {% if f.type == "image" %}
       <a href="/media/{{ f.path }}" target="_blank" title="{{ f.name }}">
         <img src="/media/{{ f.path }}" class="rounded"
@@ -354,6 +384,121 @@ _GALLERY_DATE_HTML = (
       {% endif %}
     </div>
     {% endfor %}
+  </div>
+  {% endif %}
+</div>
+<script>
+document.getElementById('file-search').addEventListener('input', function() {
+  const q = this.value.toLowerCase();
+  document.querySelectorAll('.media-item').forEach(el => {
+    el.style.display = el.dataset.name.toLowerCase().includes(q) ? '' : 'none';
+  });
+});
+</script>
+</body></html>
+"""
+)
+
+_LOGS_HTML = (
+    _BASE_STYLE
+    + """
+<div class="container" style="max-width:960px">
+  <div class="d-flex align-items-center gap-3 mb-3">
+    <h5 class="mb-0">処理ログ</h5>
+    <span class="text-muted small">最新 100 件</span>
+  </div>
+  {% if not entries %}
+  <p class="text-muted">ログがまだありません。</p>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle">
+      <thead class="table-light">
+        <tr>
+          <th class="text-nowrap">時刻</th>
+          <th></th>
+          <th>URL</th>
+          <th class="text-end">詳細</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in entries %}
+        <tr class="{{ 'table-success' if e.status == 'success' else 'table-danger' }} bg-opacity-50">
+          <td class="text-nowrap small font-monospace">{{ e.ts }}</td>
+          <td class="fs-5">{{ '✅' if e.status == 'success' else '❌' }}</td>
+          <td class="small">
+            {% for url in e.urls %}
+            <div class="text-truncate" style="max-width:340px">
+              <a href="{{ url }}" target="_blank" rel="noopener" class="text-decoration-none">{{ url }}</a>
+            </div>
+            {% endfor %}
+          </td>
+          <td class="small text-end text-nowrap">
+            {% if e.status == 'success' %}
+            <span class="text-success">{{ e.file_count }} ファイル</span>
+            {% else %}
+            <span class="text-danger" title="{{ e.error }}">{{ e.error[:60] }}{% if e.error|length > 60 %}…{% endif %}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+</body></html>
+"""
+)
+
+_FAILURES_HTML = (
+    _BASE_STYLE
+    + """
+<div class="container" style="max-width:960px">
+  <div class="d-flex align-items-center gap-3 mb-3">
+    <h5 class="mb-0">失敗リスト</h5>
+    <span class="text-muted small">{{ entries|length }} 件</span>
+  </div>
+  {% if queued %}
+  <div class="alert alert-success py-2 small">
+    リトライをキューに追加しました。Bot が数秒以内に処理します。
+  </div>
+  {% endif %}
+  {% if not entries %}
+  <p class="text-muted">失敗した処理はありません。</p>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead class="table-light">
+        <tr>
+          <th class="text-nowrap">時刻</th>
+          <th>URL</th>
+          <th>エラー</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in entries %}
+        <tr>
+          <td class="text-nowrap small font-monospace">{{ e.ts }}</td>
+          <td class="small">
+            {% for url in e.urls %}
+            <div class="text-truncate" style="max-width:260px">
+              <a href="{{ url }}" target="_blank" rel="noopener" class="text-decoration-none">{{ url }}</a>
+            </div>
+            {% endfor %}
+          </td>
+          <td class="small text-danger">
+            <span title="{{ e.error }}">{{ e.error[:80] }}{% if e.error|length > 80 %}…{% endif %}</span>
+          </td>
+          <td>
+            <form method="post" action="/retry/{{ e.message_id }}/{{ e.channel_id }}">
+              <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">リトライ</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
   {% endif %}
 </div>
@@ -420,8 +565,10 @@ def save_discord():
 
     if not bot_token or not channel_id:
         return redirect("/?error=Bot+Token+と+Channel+ID+は必須です")
-    if not channel_id.isdigit():
-        return redirect("/?error=Channel+ID+は数字のみで入力してください")
+
+    ids = [x.strip() for x in channel_id.split(",") if x.strip()]
+    if not ids or not all(x.isdigit() for x in ids):
+        return redirect("/?error=Channel+ID+は数字のみで入力してください（複数の場合はカンマ区切り）")
 
     upsert_env_value("DISCORD_BOT_TOKEN", bot_token)
     upsert_env_value("DISCORD_CHANNEL_ID", channel_id)
@@ -568,6 +715,29 @@ def gallery_date(date_str: str):
 @app.route("/media/<path:filepath>")
 def serve_media(filepath: str):
     return send_from_directory(_SAVE_PATH, filepath)
+
+
+@app.route("/logs")
+def logs():
+    entries = _log_store.get_recent_logs(100) if _log_store else []
+    return render_template_string(_LOGS_HTML, entries=entries)
+
+
+@app.route("/failures")
+def failures():
+    entries = _log_store.get_failures() if _log_store else []
+    return render_template_string(
+        _FAILURES_HTML,
+        entries=entries,
+        queued=request.args.get("queued") == "1",
+    )
+
+
+@app.route("/retry/<int:message_id>/<int:channel_id>", methods=["POST"])
+def retry(message_id: int, channel_id: int):
+    if _log_store:
+        _log_store.queue_retry(message_id, channel_id)
+    return redirect("/failures?queued=1")
 
 
 # ── エントリーポイント ─────────────────────────────────────────────────────────

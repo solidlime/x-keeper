@@ -1,6 +1,6 @@
 """
 エントリーポイント。
-Discord Bot で X (Twitter) のメディアを自動ダウンロードするメインループ。
+Discord Bot で X (Twitter) / Pixiv のメディアを自動ダウンロードするメインループ。
 """
 
 import asyncio
@@ -11,7 +11,9 @@ import threading
 from .config import Settings
 from .discord_bot import XKeeperBot
 from .image_downloader import MediaDownloader
+from .log_store import LogStore
 from .twitter_client import TwitterClient
+from . import web_setup as _web_setup_module
 from .web_setup import app as _setup_app
 
 
@@ -35,19 +37,16 @@ def _setup_logging(level: str) -> None:
     )
 
 
-_REQUIRED_SETTING_KEYS = ["DISCORD_BOT_TOKEN", "DISCORD_CHANNEL_ID"]
 _CHECK_INTERVAL = 30
 
 
 def _missing_settings(settings: Settings) -> list[str]:
-    return [
-        name
-        for name, value in zip(
-            _REQUIRED_SETTING_KEYS,
-            [settings.discord_bot_token, settings.discord_channel_id],
-        )
-        if not value
-    ]
+    missing = []
+    if not settings.discord_bot_token:
+        missing.append("DISCORD_BOT_TOKEN")
+    if not settings.channel_ids:
+        missing.append("DISCORD_CHANNEL_ID")
+    return missing
 
 
 async def _wait_for_required_settings(
@@ -87,6 +86,9 @@ async def async_main() -> None:
     logger = logging.getLogger(__name__)
     logger.info("x-keeper を起動します")
 
+    log_store = LogStore(settings.save_path)
+    _web_setup_module.set_log_store(log_store)
+
     # Flask をデーモンスレッドで起動 (ギャラリー UI)
     threading.Thread(
         target=_setup_app.run,
@@ -103,10 +105,15 @@ async def async_main() -> None:
     settings = await _wait_for_required_settings(settings, logger)
 
     twitter = TwitterClient(settings.gallery_dl_cookies_file)
-    downloader = MediaDownloader(settings.save_path, settings.gallery_dl_cookies_file, settings.pixiv_refresh_token)
+    downloader = MediaDownloader(
+        settings.save_path,
+        settings.gallery_dl_cookies_file,
+        settings.pixiv_refresh_token,
+    )
 
-    bot = XKeeperBot(settings.discord_channel_id, twitter, downloader)  # type: ignore[arg-type]
-    logger.info("Discord Bot を起動します (チャンネル ID: %d)...", settings.discord_channel_id)
+    channel_ids = settings.channel_ids
+    bot = XKeeperBot(channel_ids, twitter, downloader, log_store)
+    logger.info("Discord Bot を起動します (チャンネル ID: %s)...", channel_ids)
     await bot.start(settings.discord_bot_token)
 
 
