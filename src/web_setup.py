@@ -98,7 +98,7 @@ _BASE_STYLE = """
   <div class="container-fluid px-4">
     <span class="navbar-brand fw-bold">x-keeper</span>
     <div class="navbar-nav flex-row gap-3">
-      <a class="nav-link" href="/">セットアップ</a>
+      <a class="nav-link" href="/?setup=1">セットアップ</a>
       <a class="nav-link" href="/gallery">ギャラリー</a>
       <a class="nav-link" href="/logs">ログ</a>
       <a class="nav-link" href="/failures">失敗</a>
@@ -338,6 +338,15 @@ _INDEX_HTML = (
           「起動時のみ」は安全ですが、長期稼働時に取りこぼしが残ることがあります。
         </div>
       </div>
+      <div class="mb-3">
+        <label class="form-label fw-semibold">ギャラリー初期表示サムネイル数</label>
+        <input type="number" class="form-control" name="gallery_thumb_count"
+               min="1" max="500" value="{{ prefill.gallery_thumb_count }}">
+        <div class="form-text">
+          ギャラリートップページで先読みするサムネイルの件数。<br>
+          推奨: <code>50</code>（デフォルト）
+        </div>
+      </div>
       <button type="submit" class="btn btn-outline-primary">保存する</button>
     </form>
   </div>
@@ -349,44 +358,431 @@ _INDEX_HTML = (
 _GALLERY_INDEX_HTML = (
     _BASE_STYLE
     + """
-<div class="container" style="max-width:900px">
+{% macro thumb_item(f) %}
+<div class="col media-item" data-name="{{ f.name }}">
+  <button class="del-btn" data-path="{{ f.path }}" title="削除">🗑</button>
+  {% if f.type == "image" %}
+  <img src="/media/{{ f.path }}" class="rounded media-thumb"
+       style="width:100%;aspect-ratio:1/1;object-fit:cover"
+       data-src="/media/{{ f.path }}" data-type="image" data-caption="{{ f.name }}"
+       data-path="{{ f.path }}" alt="{{ f.name }}">
+  {% elif f.type == "video" %}
+  <div class="position-relative media-thumb"
+       data-src="/media/{{ f.path }}" data-type="video" data-caption="{{ f.name }}"
+       data-path="{{ f.path }}"
+       style="aspect-ratio:16/9;background:#000;border-radius:.375rem;overflow:hidden">
+    <video muted preload="metadata"
+           style="width:100%;height:100%;object-fit:cover;pointer-events:none">
+      <source src="/media/{{ f.path }}">
+    </video>
+    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center">
+      <span style="font-size:2.5rem;opacity:.8">▶</span>
+    </div>
+  </div>
+  {% elif f.type == "audio" %}
+  <div class="p-2 bg-white rounded border">
+    <div class="small text-muted text-truncate mb-1" title="{{ f.name }}">{{ f.name }}</div>
+    <audio controls style="width:100%"><source src="/media/{{ f.path }}"></audio>
+  </div>
+  {% else %}
+  <div class="p-2 bg-white rounded border">
+    <a href="/media/{{ f.path }}" target="_blank"
+       class="small text-truncate d-block" title="{{ f.name }}">{{ f.name }}</a>
+  </div>
+  {% endif %}
+</div>
+{% endmacro %}
+<style>
+  .media-thumb { cursor:pointer; transition: opacity .15s; }
+  .media-thumb:hover { opacity:.8; }
+  .col.media-item { position:relative; }
+  .del-btn {
+    position:absolute; top:.3rem; right:.3rem; z-index:20;
+    background:rgba(220,53,69,.85); color:#fff; border:none;
+    border-radius:50%; width:1.7rem; height:1.7rem;
+    font-size:.85rem; cursor:pointer; opacity:0;
+    transition: opacity .15s; display:flex; align-items:center; justify-content:center;
+    line-height:1;
+  }
+  .col.media-item:hover .del-btn { opacity:1; }
+  .col.media-item.deleting { opacity:0; transform:scale(.88); transition: opacity .25s, transform .25s; }
+  /* アコーディオン上書き */
+  #accordion-list .date-accordion { margin-bottom:0; border-radius:8px; overflow:hidden; }
+  .date-accordion > summary {
+    background:#f1f3f5; display:flex;
+    justify-content:space-between; align-items:center;
+  }
+  .date-accordion .date-body { padding:.75rem; }
+  /* ライトボックス */
+  #lb-backdrop {
+    display:none; position:fixed; inset:0; background:rgba(0,0,0,.88);
+    z-index:1050; align-items:center; justify-content:center; flex-direction:column;
+  }
+  #lb-backdrop.active { display:flex; }
+  #lb-content { display:flex; align-items:center; justify-content:center; }
+  #lb-caption { color:#ccc; font-size:.8rem; margin-top:.5rem; max-width:92vw;
+                overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #lb-close  { position:fixed; top:1rem; right:1.25rem; font-size:2rem;
+               color:#fff; cursor:pointer; line-height:1; z-index:1060; }
+  #lb-delete { position:fixed; top:1rem; right:3.25rem; font-size:1.5rem;
+               color:#f88; cursor:pointer; line-height:1; z-index:1060; }
+  #lb-prev, #lb-next {
+    position:fixed; top:50%; transform:translateY(-50%);
+    font-size:2.5rem; color:#fff; cursor:pointer; z-index:1060;
+    padding:.25rem .75rem; user-select:none;
+  }
+  #lb-prev { left:.5rem; }
+  #lb-next { right:.5rem; }
+  #lb-hint { position:fixed; bottom:1rem; left:50%; transform:translateX(-50%);
+             color:#aaa; font-size:.75rem; pointer-events:none; z-index:1060; }
+</style>
+
+<div class="container" style="max-width:1200px">
   <div class="d-flex align-items-center gap-3 mb-3">
     <h5 class="mb-0">ダウンロード済みメディア</h5>
-    <span class="text-muted small">{{ dirs|length }} 日分</span>
+    <span class="text-muted small">{{ dates|length }} 日分</span>
   </div>
-  <form method="get" action="/gallery/search" class="d-flex gap-2 mb-2">
+  <form method="get" action="/gallery/search" class="d-flex gap-2 mb-3">
     <input type="text" name="q" class="form-control form-control-sm"
            placeholder="ファイル名で全日付を横断検索">
     <button type="submit" class="btn btn-sm btn-primary text-nowrap">検索</button>
   </form>
-  <input type="text" id="date-search" class="form-control form-control-sm mb-3"
-         placeholder="日付で絞り込み　例: 2026-02">
-  {% if not dirs %}
+  {% if not dates %}
   <p class="text-muted">まだメディアがありません。</p>
   {% else %}
-  <div class="list-group">
-    {% for d in dirs %}
-    <a href="/gallery/{{ d.name }}"
-       class="list-group-item list-group-item-action d-flex justify-content-between align-items-center date-item"
-       data-date="{{ d.name }}">
-      <span class="fw-semibold font-monospace">{{ d.name }}</span>
-      <span class="badge bg-secondary rounded-pill">{{ d.count }} ファイル</span>
-    </a>
+  <div id="accordion-list" class="d-flex flex-column gap-2">
+    {% for d in dates %}
+    <details {% if d.preloaded %}open{% endif %}
+             class="date-accordion" data-date="{{ d.name }}"
+             data-loaded="{{ 'true' if d.preloaded else 'false' }}">
+      <summary>
+        <span class="fw-semibold font-monospace">{{ d.name }}</span>
+        <span class="badge bg-secondary rounded-pill">{{ d.count }} ファイル</span>
+      </summary>
+      <div class="date-body">
+        {% if d.preloaded and d.files %}
+        <div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 row-cols-lg-5 g-2">
+          {% for f in d.files %}{{ thumb_item(f) }}{% endfor %}
+        </div>
+        {% elif d.preloaded %}
+        <p class="text-muted small m-0">ファイルがありません。</p>
+        {% else %}
+        <div class="lazy-body text-center py-3" data-date="{{ d.name }}">
+          <div class="spinner-border spinner-border-sm text-secondary" role="status">
+            <span class="visually-hidden">読み込み中...</span>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+    </details>
     {% endfor %}
   </div>
+  <div id="scroll-sentinel" style="height:1px;margin-top:40px"></div>
   {% endif %}
 </div>
+
+<!-- ライトボックス -->
+<div id="lb-backdrop">
+  <span id="lb-close"  title="閉じる (Esc)">✕</span>
+  <span id="lb-delete" title="削除 (Del)">🗑</span>
+  <span id="lb-prev"   title="前へ (←)">‹</span>
+  <span id="lb-next"   title="次へ (→)">›</span>
+  <div id="lb-content"></div>
+  <div id="lb-caption"></div>
+  <div id="lb-hint">ホイール / ピンチ: ズーム　ダブルクリック: リセット　Del: 削除</div>
+</div>
+
 <script>
-document.getElementById('date-search').addEventListener('input', function() {
-  const q = this.value.toLowerCase();
-  document.querySelectorAll('.date-item').forEach(el => {
-    el.style.display = el.dataset.date.includes(q) ? '' : 'none';
+(function () {
+  const backdrop = document.getElementById('lb-backdrop');
+  const content  = document.getElementById('lb-content');
+  const caption  = document.getElementById('lb-caption');
+  let cur = 0;
+
+  // ── ズーム状態 ────────────────────────────────────────────────────────────
+  let scale = 1, tx = 0, ty = 0;
+  let dragging = false, didDrag = false;
+  let drag0 = { x: 0, y: 0, tx: 0, ty: 0 };
+  let pinch0 = { dist: 0, scale: 0 };
+  let closeCancelled = false;
+
+  function mediaEl() { return content.querySelector('img, video'); }
+
+  function applyTransform() {
+    const el = mediaEl();
+    if (!el) return;
+    el.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`;
+    if (el.tagName === 'IMG')
+      el.style.cursor = scale > 1 ? (dragging ? 'grabbing' : 'grab') : '';
+  }
+
+  function resetZoom() {
+    scale = 1; tx = 0; ty = 0;
+    const el = mediaEl();
+    if (el) { el.style.transform = ''; el.style.cursor = ''; }
+  }
+
+  // ── サムネイル一覧 (動的取得) ──────────────────────────────────────────────
+  function visibleThumbs() {
+    return Array.from(document.querySelectorAll('.media-thumb'))
+      .filter(el => el.closest('.media-item').style.display !== 'none');
+  }
+
+  // ── ライトボックス開閉 ────────────────────────────────────────────────────
+  function open(idx) {
+    const vt = visibleThumbs();
+    if (!vt.length) return;
+    cur = ((idx % vt.length) + vt.length) % vt.length;
+    const el = vt[cur];
+    caption.textContent = el.dataset.caption || '';
+    content.innerHTML = '';
+    scale = 1; tx = 0; ty = 0;
+    if (el.dataset.type === 'image') {
+      const img = document.createElement('img');
+      img.src = el.dataset.src;
+      img.style.cssText = 'max-width:92vw;max-height:84vh;object-fit:contain;border-radius:4px;display:block;transform-origin:center';
+      content.appendChild(img);
+    } else {
+      const v = document.createElement('video');
+      v.controls = true; v.autoplay = true;
+      v.style.cssText = 'max-width:92vw;max-height:84vh;border-radius:4px;display:block';
+      const s = document.createElement('source');
+      s.src = el.dataset.src; v.appendChild(s);
+      content.appendChild(v);
+    }
+    backdrop.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function close() {
+    content.innerHTML = '';
+    backdrop.classList.remove('active');
+    document.body.style.overflow = '';
+    scale = 1; tx = 0; ty = 0;
+  }
+
+  function move(delta) {
+    const vt = visibleThumbs();
+    if (!vt.length) return;
+    open(cur + delta);
+  }
+
+  // ── 削除 ──────────────────────────────────────────────────────────────────
+  async function deleteFile(path, onSuccess) {
+    const name = path.split('/').pop();
+    if (!confirm(`「${name}」を削除しますか？\nこの操作は取り消せません。`)) return;
+    try {
+      const res = await fetch('/delete-media', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'path=' + encodeURIComponent(path),
+      });
+      if (!res.ok) { alert('削除に失敗しました'); return; }
+      onSuccess();
+    } catch (e) {
+      alert('削除に失敗しました: ' + e);
+    }
+  }
+
+  // ── イベント委譲 (動的コンテンツ対応) ────────────────────────────────────
+  document.addEventListener('click', e => {
+    // 削除ボタンを先にチェック
+    const btn = e.target.closest('.del-btn');
+    if (btn) {
+      e.stopPropagation();
+      const item = btn.closest('.media-item');
+      deleteFile(btn.dataset.path, () => {
+        item.classList.add('deleting');
+        setTimeout(() => item.remove(), 280);
+      });
+      return;
+    }
+    // サムネイルクリック → ライトボックス
+    const thumb = e.target.closest('.media-thumb');
+    if (thumb) {
+      const vt = visibleThumbs();
+      open(vt.indexOf(thumb));
+    }
   });
-});
+
+  document.getElementById('lb-close').addEventListener('click', close);
+  document.getElementById('lb-prev').addEventListener('click', () => move(-1));
+  document.getElementById('lb-next').addEventListener('click', () => move(1));
+
+  // ライトボックス削除
+  document.getElementById('lb-delete').addEventListener('click', () => {
+    const vt = visibleThumbs();
+    if (!vt.length) return;
+    const el = vt[cur];
+    const item = el.closest('.media-item');
+    deleteFile(el.dataset.path, () => {
+      close();
+      item.classList.add('deleting');
+      setTimeout(() => item.remove(), 280);
+    });
+  });
+
+  backdrop.addEventListener('click', e => {
+    if (closeCancelled) { closeCancelled = false; return; }
+    if (e.target === backdrop) close();
+  });
+
+  document.addEventListener('keydown', e => {
+    if (!backdrop.classList.contains('active')) return;
+    if (e.key === 'Escape') close();
+    if (e.key === 'ArrowLeft')  move(-1);
+    if (e.key === 'ArrowRight') move(1);
+    if (e.key === '0') resetZoom();
+    if (e.key === 'Delete') document.getElementById('lb-delete').click();
+  });
+
+  // ── ホイールズーム ────────────────────────────────────────────────────────
+  backdrop.addEventListener('wheel', e => {
+    const el = mediaEl();
+    if (!el || el.tagName === 'VIDEO') return;
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    scale = Math.max(1, Math.min(10, scale * factor));
+    if (scale < 1.01) { scale = 1; tx = 0; ty = 0; }
+    applyTransform();
+  }, { passive: false });
+
+  // ── ドラッグパン ──────────────────────────────────────────────────────────
+  content.addEventListener('mousedown', e => {
+    if (scale <= 1 || !mediaEl()) return;
+    dragging = true; didDrag = false;
+    drag0 = { x: e.clientX, y: e.clientY, tx, ty };
+    applyTransform();
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const dx = e.clientX - drag0.x, dy = e.clientY - drag0.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) didDrag = true;
+    tx = drag0.tx + dx; ty = drag0.ty + dy;
+    applyTransform();
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    if (didDrag) closeCancelled = true;
+    applyTransform();
+  });
+
+  content.addEventListener('dblclick', e => {
+    if (scale === 1) return;
+    resetZoom(); e.stopPropagation();
+  });
+
+  // ── ピンチズーム ──────────────────────────────────────────────────────────
+  backdrop.addEventListener('touchstart', e => {
+    if (e.touches.length === 2) {
+      pinch0.dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      pinch0.scale = scale;
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  backdrop.addEventListener('touchmove', e => {
+    if (e.touches.length !== 2) return;
+    e.preventDefault();
+    const dist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    scale = Math.max(1, Math.min(10, pinch0.scale * (dist / pinch0.dist)));
+    if (scale < 1.01) { scale = 1; tx = 0; ty = 0; }
+    applyTransform();
+  }, { passive: false });
+
+  // ── アコーディオン: 手動展開時に遅延読み込み ──────────────────────────────
+  async function loadDate(accordion) {
+    if (accordion.dataset.loaded === 'true') return;
+    accordion.dataset.loaded = 'true';
+    const body = accordion.querySelector('.lazy-body');
+    if (!body) return;
+    const date = body.dataset.date;
+    try {
+      const res = await fetch(`/gallery/thumbs/${date}`);
+      const html = await res.text();
+      body.innerHTML = html;
+      body.classList.remove('lazy-body');
+    } catch {
+      body.textContent = '読み込みに失敗しました';
+    }
+  }
+
+  document.querySelectorAll('.date-accordion').forEach(acc => {
+    acc.addEventListener('toggle', () => {
+      if (acc.open) loadDate(acc);
+    });
+  });
+
+  // ── 無限スクロール (IntersectionObserver) ────────────────────────────────
+  const sentinel = document.getElementById('scroll-sentinel');
+  if (sentinel) {
+    const observer = new IntersectionObserver(entries => {
+      if (!entries[0].isIntersecting) return;
+      const next = document.querySelector('.date-accordion[data-loaded="false"]');
+      if (!next) { observer.disconnect(); return; }
+      next.open = true;
+      // toggle イベントが loadDate を呼ぶ
+    }, { rootMargin: '200px' });
+    observer.observe(sentinel);
+  }
+})();
 </script>
 </body></html>
 """
 )
+
+_THUMBS_FRAGMENT_HTML = """
+{% if not files %}
+<p class="text-muted small m-0">ファイルがありません。</p>
+{% else %}
+<div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 row-cols-lg-5 g-2">
+  {% for f in files %}
+  <div class="col media-item" data-name="{{ f.name }}">
+    <button class="del-btn" data-path="{{ f.path }}" title="削除">🗑</button>
+    {% if f.type == "image" %}
+    <img src="/media/{{ f.path }}" class="rounded media-thumb"
+         style="width:100%;aspect-ratio:1/1;object-fit:cover"
+         data-src="/media/{{ f.path }}" data-type="image" data-caption="{{ f.name }}"
+         data-path="{{ f.path }}" alt="{{ f.name }}">
+    {% elif f.type == "video" %}
+    <div class="position-relative media-thumb"
+         data-src="/media/{{ f.path }}" data-type="video" data-caption="{{ f.name }}"
+         data-path="{{ f.path }}"
+         style="aspect-ratio:16/9;background:#000;border-radius:.375rem;overflow:hidden">
+      <video muted preload="metadata"
+             style="width:100%;height:100%;object-fit:cover;pointer-events:none">
+        <source src="/media/{{ f.path }}">
+      </video>
+      <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center">
+        <span style="font-size:2.5rem;opacity:.8">▶</span>
+      </div>
+    </div>
+    {% elif f.type == "audio" %}
+    <div class="p-2 bg-white rounded border">
+      <div class="small text-muted text-truncate mb-1" title="{{ f.name }}">{{ f.name }}</div>
+      <audio controls style="width:100%"><source src="/media/{{ f.path }}"></audio>
+    </div>
+    {% else %}
+    <div class="p-2 bg-white rounded border">
+      <a href="/media/{{ f.path }}" target="_blank"
+         class="small text-truncate d-block" title="{{ f.name }}">{{ f.name }}</a>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+"""
 
 _GALLERY_DATE_HTML = (
     _BASE_STYLE
@@ -854,6 +1250,7 @@ def _prefill_values() -> dict[str, str]:
         "pixiv_token": env.get("PIXIV_REFRESH_TOKEN", ""),
         "retry_poll_interval": env.get("RETRY_POLL_INTERVAL", "30"),
         "scan_interval": env.get("SCAN_INTERVAL", "0"),
+        "gallery_thumb_count": env.get("GALLERY_THUMB_COUNT", "50"),
     }
 
 
@@ -862,6 +1259,16 @@ def _prefill_values() -> dict[str, str]:
 
 @app.route("/")
 def index():
+    # フラッシュパラメータや明示的セットアップ要求がなく、Pixiv OAuth中でもなければ
+    # Discord が設定済みの場合はギャラリーへリダイレクト
+    _flash_keys = {"saved", "error", "cookies_saved", "pixiv_saved", "pixiv_error",
+                   "bot_config_saved", "setup"}
+    has_flash = any(request.args.get(k) for k in _flash_keys)
+    has_pixiv_oauth = bool(session.get("pixiv_auth_url"))
+    if not has_flash and not has_pixiv_oauth:
+        st = _current_status()
+        if st.get("DISCORD_BOT_TOKEN") and st.get("DISCORD_CHANNEL_ID"):
+            return redirect("/gallery")
     return render_template_string(
         _INDEX_HTML,
         status=_current_status(),
@@ -904,11 +1311,14 @@ def save_cookies():
 def save_bot_config():
     retry_poll_interval = request.form.get("retry_poll_interval", "30").strip()
     scan_interval = request.form.get("scan_interval", "0").strip()
-    if not retry_poll_interval.isdigit() or not scan_interval.isdigit():
-        return redirect("/?error=数値を入力してください")
+    gallery_thumb_count = request.form.get("gallery_thumb_count", "50").strip()
+    if (not retry_poll_interval.isdigit() or not scan_interval.isdigit()
+            or not gallery_thumb_count.isdigit()):
+        return redirect("/?setup=1&error=数値を入力してください")
     upsert_env_value("RETRY_POLL_INTERVAL", retry_poll_interval)
     upsert_env_value("SCAN_INTERVAL", scan_interval)
-    return redirect("/?bot_config_saved=1")
+    upsert_env_value("GALLERY_THUMB_COUNT", gallery_thumb_count)
+    return redirect("/?setup=1&bot_config_saved=1")
 
 
 @app.route("/save-pixiv-token", methods=["POST"])
@@ -1014,16 +1424,37 @@ def pixiv_oauth_exchange():
 
 @app.route("/gallery")
 def gallery():
+    from dotenv import dotenv_values
+    env = dotenv_values(_ENV_FILE) if _ENV_FILE.exists() else {}
+    try:
+        thumb_count = int(env.get("GALLERY_THUMB_COUNT", "50"))
+    except ValueError:
+        thumb_count = 50
+
     save_path = Path(_SAVE_PATH)
     if not save_path.exists():
-        dirs = []
+        date_data = []
     else:
-        dirs = [
-            {"name": d.name, "count": sum(1 for f in d.iterdir() if f.is_file())}
-            for d in sorted(save_path.iterdir(), reverse=True)
-            if d.is_dir() and re.match(r"^\d{4}-\d{2}-\d{2}$", d.name)
-        ]
-    return render_template_string(_GALLERY_INDEX_HTML, dirs=dirs)
+        date_dirs = sorted(
+            [d for d in save_path.iterdir()
+             if d.is_dir() and re.match(r"^\d{4}-\d{2}-\d{2}$", d.name)],
+            reverse=True,
+        )
+        date_data = []
+        total_preloaded = 0
+        for d in date_dirs:
+            files_sorted = sorted(f for f in d.iterdir() if f.is_file())
+            count = len(files_sorted)
+            if total_preloaded < thumb_count:
+                file_data = [
+                    {"name": f.name, "type": _media_type(f.name), "path": f"{d.name}/{f.name}"}
+                    for f in files_sorted
+                ]
+                total_preloaded += count
+                date_data.append({"name": d.name, "count": count, "files": file_data, "preloaded": True})
+            else:
+                date_data.append({"name": d.name, "count": count, "files": [], "preloaded": False})
+    return render_template_string(_GALLERY_INDEX_HTML, dates=date_data)
 
 
 @app.route("/gallery/<date_str>")
@@ -1039,6 +1470,22 @@ def gallery_date(date_str: str):
         if f.is_file()
     ]
     return render_template_string(_GALLERY_DATE_HTML, date=date_str, files=files)
+
+
+@app.route("/gallery/thumbs/<date_str>")
+def gallery_thumbs(date_str: str):
+    """AJAX: 日付フォルダのサムネイルグリッド HTML フラグメントを返す。"""
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
+        return "", 400
+    target = Path(_SAVE_PATH) / date_str
+    if not target.exists() or not target.is_dir():
+        return "", 404
+    files = [
+        {"name": f.name, "type": _media_type(f.name), "path": f"{date_str}/{f.name}"}
+        for f in sorted(target.iterdir())
+        if f.is_file()
+    ]
+    return render_template_string(_THUMBS_FRAGMENT_HTML, files=files)
 
 
 @app.route("/media/<path:filepath>")

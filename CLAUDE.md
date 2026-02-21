@@ -67,6 +67,7 @@ python -m src.main
 | `WEB_SETUP_PORT` | — | `8989` | Web サーバーポート番号 |
 | `RETRY_POLL_INTERVAL` | — | `30` | リトライキューのポーリング間隔 (秒) |
 | `SCAN_INTERVAL` | — | `0` | 未処理メッセージの定期スキャン間隔 (秒、0=起動時のみ) |
+| `GALLERY_THUMB_COUNT` | — | `50` | ギャラリートップで先読みするサムネイル数 |
 | `LOG_LEVEL` | — | `INFO` | ログレベル (DEBUG/INFO/WARNING/ERROR) |
 
 ### 重要な設計上の注意点
@@ -98,27 +99,33 @@ python -m src.main
 
 | ルート | 説明 |
 |---|---|
-| `GET /` | セットアップフォーム (Discord / Cookie / Pixiv / Bot動作設定) |
+| `GET /` | Discord 設定済みなら `/gallery` にリダイレクト。未設定またはクエリパラメータあり時はセットアップフォームを表示 |
+| `GET /?setup=1` | セットアップフォームを強制表示 |
 | `POST /save-discord` | Bot Token / Channel ID の保存 |
 | `POST /save-cookies` | Cookie ファイルパスの保存 |
 | `POST /save-pixiv-token` | Pixiv リフレッシュトークンの手動保存 |
 | `GET /pixiv-oauth/start` | Pixiv OAuth PKCE 開始 (JSON レスポンス) |
 | `POST /pixiv-oauth/exchange` | code → refresh_token 交換・保存 |
 | `GET /pixiv-oauth/cancel` | OAuth セッションクリア |
-| `POST /save-bot-config` | RETRY_POLL_INTERVAL / SCAN_INTERVAL の保存 |
-| `GET /gallery` | 日付フォルダ一覧 + ファイル名横断検索フォーム |
+| `POST /save-bot-config` | RETRY_POLL_INTERVAL / SCAN_INTERVAL / GALLERY_THUMB_COUNT の保存 |
+| `GET /gallery` | ギャラリートップ。日付アコーディオン + 先読みサムネイル + 無限スクロール |
+| `GET /gallery/thumbs/<date>` | AJAX: 日付フォルダのサムネイル HTML フラグメントを返す |
 | `GET /gallery/search?q=` | 全日付横断ファイル名検索 |
-| `GET /gallery/<YYYY-MM-DD>` | 画像グリッド・動画・音声プレイヤー (ライトボックス付き) |
+| `GET /gallery/<YYYY-MM-DD>` | 日付別ページ (個別アクセス用) |
+| `DELETE /delete-media` | メディアファイル削除 (パストラバーサル対策済み) |
 | `GET /media/<path>` | `send_from_directory` によるメディア配信 |
 | `GET /logs` | 処理ログ (最新 100 件) |
 | `GET /failures` | 失敗リスト |
 | `POST /retry/<message_id>/<channel_id>` | リトライキューへ追加 |
 
-**ギャラリーライトボックス** (`/gallery/<date>`):
-- サムネイルクリックでページ内表示
-- ← → キー / クリックで前後ナビ、Esc で閉じる
-- ホイールズーム (最大10倍)、ドラッグパン、ピンチズーム (タッチ対応)
-- ダブルクリック / `0` キーでズームリセット
+**ギャラリー** (`/gallery`):
+- `GALLERY_THUMB_COUNT` (デフォルト50) 件に達するまでの日付を先読み表示 (サーバーサイドレンダリング)
+- 残りの日付は `<details>` アコーディオン (閉じた状態) でリスト表示
+- アコーディオンを開くか無限スクロールで到達すると `/gallery/thumbs/<date>` を AJAX で取得
+- ライトボックス: サムネイルクリックでページ内表示、← → ナビ、Esc で閉じる
+- ホイールズーム (最大10倍)、ドラッグパン、ピンチズーム、ダブルクリックでリセット
+- 削除ボタン (サムネイルホバー時 + ライトボックス内 + Del キー)
+- イベント委譲により動的読み込みコンテンツにも削除・ライトボックスが動作
 
 **LogStore** (`src/log_store.py`):
 - `{SAVE_PATH}/logs.json` に JSON 形式で保存 (最大 500 件)
