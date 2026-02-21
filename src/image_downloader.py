@@ -30,9 +30,9 @@ _USER_MEDIA_TIMEOUT = 7200
 # 例: AIUnajyu-2022329732306772314-01.jpg
 _TWITTER_FILENAME_TEMPLATE = "{author[name]}-{tweet_id}-{num:02d}.{extension}"
 
-# ファイル名から tweet_id を抽出するパターン (15〜20桁の数字)
+# ファイル名から tweet_id を抽出するパターン (10〜20桁: 2010年代以降のツイートに対応)
 _TWEET_ID_FROM_URL = re.compile(r"/status/(\d+)")
-_TWEET_ID_FROM_FILENAME = re.compile(r"-(\d{15,20})-\d{2}\.\w+$")
+_TWEET_ID_FROM_FILENAME = re.compile(r"-(\d{10,20})-\d{2}\.\w+$")
 
 
 class MediaDownloader:
@@ -203,7 +203,7 @@ class MediaDownloader:
     def _download_one(self, url: str, dest_dir: Path, filename_template: str | None) -> list[Path]:
         """単一ツイートの全メディアを gallery-dl でダウンロードする。
 
-        ディレクトリ半差分析により新規保存ファイルを特定する。
+        ディレクトリ差分により新規保存ファイルを特定する。
 
         Args:
             url: ダウンロード対象のツイート URL。
@@ -365,7 +365,7 @@ def _tweet_id_from_filename(filename: str) -> str | None:
     """ファイル名から tweet_id を抽出する。
 
     ファイル名テンプレート ``{author}-{tweet_id}-{num:02d}.{ext}`` を前提とし、
-    15〜20桁の数字を tweet_id として返す。
+    10〜20桁の数字を tweet_id として返す。
     """
     m = _TWEET_ID_FROM_FILENAME.search(filename)
     return m.group(1) if m else None
