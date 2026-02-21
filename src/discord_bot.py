@@ -25,6 +25,9 @@ TWITTER_URL_PATTERN = re.compile(
 PIXIV_URL_PATTERN = re.compile(
     r"https?://(?:www\.)?pixiv\.net/(?:en/)?artworks/\d+"
 )
+IMGUR_URL_PATTERN = re.compile(
+    r"https?://(?:i\.)?imgur\.com/[A-Za-z0-9/_\-.]+"
+)
 
 _REACTION_OK = "✅"
 _REACTION_PROCESSING = "⏳"
@@ -33,8 +36,12 @@ _RETRY_POLL_INTERVAL = 5  # 秒
 
 
 def _find_media_urls(content: str) -> list[str]:
-    """メッセージ内の X/Twitter および Pixiv の URL を全て返す。"""
-    return TWITTER_URL_PATTERN.findall(content) + PIXIV_URL_PATTERN.findall(content)
+    """メッセージ内の X/Twitter・Pixiv・Imgur の URL を全て返す。"""
+    return (
+        TWITTER_URL_PATTERN.findall(content)
+        + PIXIV_URL_PATTERN.findall(content)
+        + IMGUR_URL_PATTERN.findall(content)
+    )
 
 
 class XKeeperBot(discord.Client):
@@ -107,7 +114,7 @@ class XKeeperBot(discord.Client):
         total_files = 0
         for url in urls:
             try:
-                if PIXIV_URL_PATTERN.search(url):
+                if PIXIV_URL_PATTERN.search(url) or IMGUR_URL_PATTERN.search(url):
                     saved = self.downloader.download_direct([url])
                     if not saved:
                         errors.append(f"ダウンロード失敗 (ファイルなし): {url}")

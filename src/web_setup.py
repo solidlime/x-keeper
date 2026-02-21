@@ -312,6 +312,11 @@ _GALLERY_INDEX_HTML = (
     <h5 class="mb-0">ダウンロード済みメディア</h5>
     <span class="text-muted small">{{ dirs|length }} 日分</span>
   </div>
+  <form method="get" action="/gallery/search" class="d-flex gap-2 mb-2">
+    <input type="text" name="q" class="form-control form-control-sm"
+           placeholder="ファイル名で全日付を横断検索">
+    <button type="submit" class="btn btn-sm btn-primary text-nowrap">検索</button>
+  </form>
   <input type="text" id="date-search" class="form-control form-control-sm mb-3"
          placeholder="日付で絞り込み　例: 2026-02">
   {% if not dirs %}
@@ -352,8 +357,7 @@ _GALLERY_DATE_HTML = (
     z-index:1050; align-items:center; justify-content:center; flex-direction:column;
   }
   #lb-backdrop.active { display:flex; }
-  #lb-content { max-width:92vw; max-height:84vh; object-fit:contain; }
-  #lb-content video { max-width:92vw; max-height:84vh; }
+  #lb-content { display:flex; align-items:center; justify-content:center; }
   #lb-caption { color:#ccc; font-size:.8rem; margin-top:.5rem; max-width:92vw;
                 overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #lb-close  { position:fixed; top:1rem; right:1.25rem; font-size:2rem;
@@ -365,6 +369,8 @@ _GALLERY_DATE_HTML = (
   }
   #lb-prev { left:.5rem; }
   #lb-next { right:.5rem; }
+  #lb-hint { position:fixed; bottom:1rem; left:50%; transform:translateX(-50%);
+             color:#aaa; font-size:.75rem; pointer-events:none; z-index:1060; }
 </style>
 
 <div class="container" style="max-width:1200px">
@@ -422,16 +428,41 @@ _GALLERY_DATE_HTML = (
   <span id="lb-next" title="次へ (→)">›</span>
   <div id="lb-content"></div>
   <div id="lb-caption"></div>
+  <div id="lb-hint">ホイール / ピンチ: ズーム　ダブルクリック: リセット</div>
 </div>
 
 <script>
 (function () {
-  const thumbs = Array.from(document.querySelectorAll('.media-thumb'));
+  const thumbs  = Array.from(document.querySelectorAll('.media-thumb'));
   const backdrop = document.getElementById('lb-backdrop');
   const content  = document.getElementById('lb-content');
   const caption  = document.getElementById('lb-caption');
   let cur = 0;
 
+  // ── ズーム状態 ────────────────────────────────────────────────────────────
+  let scale = 1, tx = 0, ty = 0;
+  let dragging = false, didDrag = false;
+  let drag0 = { x: 0, y: 0, tx: 0, ty: 0 };
+  let pinch0 = { dist: 0, scale: 0 };
+  let closeCancelled = false;
+
+  function mediaEl() { return content.querySelector('img, video'); }
+
+  function applyTransform() {
+    const el = mediaEl();
+    if (!el) return;
+    el.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`;
+    if (el.tagName === 'IMG')
+      el.style.cursor = scale > 1 ? (dragging ? 'grabbing' : 'grab') : '';
+  }
+
+  function resetZoom() {
+    scale = 1; tx = 0; ty = 0;
+    const el = mediaEl();
+    if (el) { el.style.transform = ''; el.style.cursor = ''; }
+  }
+
+  // ── ナビゲーション ────────────────────────────────────────────────────────
   function visibleThumbs() {
     return thumbs.filter(el => el.closest('.media-item').style.display !== 'none');
   }
@@ -441,24 +472,20 @@ _GALLERY_DATE_HTML = (
     if (!vt.length) return;
     cur = ((idx % vt.length) + vt.length) % vt.length;
     const el = vt[cur];
-    const src = el.dataset.src;
-    const type = el.dataset.type;
     caption.textContent = el.dataset.caption || '';
     content.innerHTML = '';
-    if (type === 'image') {
+    scale = 1; tx = 0; ty = 0;
+    if (el.dataset.type === 'image') {
       const img = document.createElement('img');
-      img.id = 'lb-content';
-      img.src = src;
-      img.style.cssText = 'max-width:92vw;max-height:84vh;object-fit:contain;border-radius:4px';
+      img.src = el.dataset.src;
+      img.style.cssText = 'max-width:92vw;max-height:84vh;object-fit:contain;border-radius:4px;display:block;transform-origin:center';
       content.appendChild(img);
     } else {
       const v = document.createElement('video');
-      v.controls = true;
-      v.autoplay = true;
-      v.style.cssText = 'max-width:92vw;max-height:84vh;border-radius:4px';
+      v.controls = true; v.autoplay = true;
+      v.style.cssText = 'max-width:92vw;max-height:84vh;border-radius:4px;display:block';
       const s = document.createElement('source');
-      s.src = src;
-      v.appendChild(s);
+      s.src = el.dataset.src; v.appendChild(s);
       content.appendChild(v);
     }
     backdrop.classList.add('active');
@@ -469,33 +496,107 @@ _GALLERY_DATE_HTML = (
     content.innerHTML = '';
     backdrop.classList.remove('active');
     document.body.style.overflow = '';
+    scale = 1; tx = 0; ty = 0;
   }
 
   function move(delta) { open(cur + delta); }
 
-  thumbs.forEach((el, i) => {
+  thumbs.forEach(el => {
     el.addEventListener('click', () => open(visibleThumbs().indexOf(el)));
   });
 
   document.getElementById('lb-close').addEventListener('click', close);
   document.getElementById('lb-prev').addEventListener('click', () => move(-1));
   document.getElementById('lb-next').addEventListener('click', () => move(1));
-  backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
+
+  backdrop.addEventListener('click', e => {
+    if (closeCancelled) { closeCancelled = false; return; }
+    if (e.target === backdrop) close();
+  });
 
   document.addEventListener('keydown', e => {
     if (!backdrop.classList.contains('active')) return;
     if (e.key === 'Escape') close();
     if (e.key === 'ArrowLeft')  move(-1);
     if (e.key === 'ArrowRight') move(1);
+    if (e.key === '0') resetZoom();
   });
 
-  // ファイル名フィルタ
-  document.getElementById('file-search').addEventListener('input', function () {
-    const q = this.value.toLowerCase();
-    document.querySelectorAll('.media-item').forEach(el => {
-      el.style.display = el.dataset.name.toLowerCase().includes(q) ? '' : 'none';
-    });
+  // ── ホイールズーム ────────────────────────────────────────────────────────
+  backdrop.addEventListener('wheel', e => {
+    const el = mediaEl();
+    if (!el || el.tagName === 'VIDEO') return;
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    scale = Math.max(1, Math.min(10, scale * factor));
+    if (scale < 1.01) { scale = 1; tx = 0; ty = 0; }
+    applyTransform();
+  }, { passive: false });
+
+  // ── ドラッグパン ──────────────────────────────────────────────────────────
+  content.addEventListener('mousedown', e => {
+    if (scale <= 1 || !mediaEl()) return;
+    dragging = true; didDrag = false;
+    drag0 = { x: e.clientX, y: e.clientY, tx, ty };
+    applyTransform();
+    e.preventDefault();
   });
+
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const dx = e.clientX - drag0.x, dy = e.clientY - drag0.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) didDrag = true;
+    tx = drag0.tx + dx; ty = drag0.ty + dy;
+    applyTransform();
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    if (didDrag) closeCancelled = true;
+    applyTransform();
+  });
+
+  // ダブルクリックでズームリセット
+  content.addEventListener('dblclick', e => {
+    if (scale === 1) return;
+    resetZoom(); e.stopPropagation();
+  });
+
+  // ── ピンチズーム ──────────────────────────────────────────────────────────
+  backdrop.addEventListener('touchstart', e => {
+    if (e.touches.length === 2) {
+      pinch0.dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      pinch0.scale = scale;
+      e.preventDefault();
+    }
+  }, { passive: false });
+
+  backdrop.addEventListener('touchmove', e => {
+    if (e.touches.length !== 2) return;
+    e.preventDefault();
+    const dist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    scale = Math.max(1, Math.min(10, pinch0.scale * (dist / pinch0.dist)));
+    if (scale < 1.01) { scale = 1; tx = 0; ty = 0; }
+    applyTransform();
+  }, { passive: false });
+
+  // ── ファイル名フィルタ ────────────────────────────────────────────────────
+  const searchEl = document.getElementById('file-search');
+  if (searchEl) {
+    searchEl.addEventListener('input', function () {
+      const q = this.value.toLowerCase();
+      document.querySelectorAll('.media-item').forEach(el => {
+        el.style.display = el.dataset.name.toLowerCase().includes(q) ? '' : 'none';
+      });
+    });
+  }
 })();
 </script>
 </body></html>
@@ -818,6 +919,27 @@ def gallery_date(date_str: str):
 @app.route("/media/<path:filepath>")
 def serve_media(filepath: str):
     return send_from_directory(_SAVE_PATH, filepath)
+
+
+@app.route("/gallery/search")
+def gallery_search():
+    q = request.args.get("q", "").strip().lower()
+    if not q:
+        return redirect("/gallery")
+    save_path = Path(_SAVE_PATH)
+    files = []
+    if save_path.exists():
+        for date_dir in sorted(save_path.iterdir(), reverse=True):
+            if not date_dir.is_dir() or not re.match(r"^\d{4}-\d{2}-\d{2}$", date_dir.name):
+                continue
+            for f in sorted(date_dir.iterdir()):
+                if f.is_file() and q in f.name.lower():
+                    files.append({
+                        "name": f.name,
+                        "type": _media_type(f.name),
+                        "path": f"{date_dir.name}/{f.name}",
+                    })
+    return render_template_string(_GALLERY_DATE_HTML, date=f"🔍 {q}", files=files)
 
 
 @app.route("/logs")
