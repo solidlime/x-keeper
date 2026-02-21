@@ -49,8 +49,12 @@ data/client_secrets.json
 x.com_cookies.txt
 data/x.com_cookies.txt
 
-# データディレクトリ（画像）
-data/images/
+# データディレクトリ（ダウンロード済みメディア・ログ）
+data/
+
+# Claude Code / Serena (ツール設定・ワークツリー)
+.claude/
+.serena/
 
 # ログファイル
 *.log
