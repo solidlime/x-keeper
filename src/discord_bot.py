@@ -122,28 +122,37 @@ class XKeeperBot(discord.Client):
 
         await message.add_reaction(_REACTION_PROCESSING)
 
+        loop = asyncio.get_running_loop()
         errors: list[str] = []
         total_files = 0
         for url in urls:
             try:
                 if X_MEDIA_PAGE_PATTERN.search(url):
-                    saved = self.downloader.download_user_media(url)
+                    saved = await loop.run_in_executor(
+                        None, self.downloader.download_user_media, url
+                    )
                     if not saved:
                         logger.info("新規メディアなし (全て取得済み): url=%s", url)
                     else:
                         total_files += len(saved)
                 elif PIXIV_URL_PATTERN.search(url) or IMGUR_URL_PATTERN.search(url):
-                    saved = self.downloader.download_direct([url])
+                    saved = await loop.run_in_executor(
+                        None, self.downloader.download_direct, [url]
+                    )
                     if not saved:
                         errors.append(f"ダウンロード失敗 (ファイルなし): {url}")
                     else:
                         total_files += len(saved)
                 else:
-                    thread = self.twitter.get_thread(url)
+                    thread = await loop.run_in_executor(
+                        None, self.twitter.get_thread, url
+                    )
                     if not thread.tweet_urls:
                         logger.info("メディアが見つかりませんでした: url=%s", url)
                         continue
-                    saved = self.downloader.download_all(thread.tweet_urls)
+                    saved = await loop.run_in_executor(
+                        None, self.downloader.download_all, thread.tweet_urls
+                    )
                     if not saved:
                         errors.append(f"ダウンロード失敗 (ファイルなし): {url}")
                     else:
