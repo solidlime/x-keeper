@@ -344,6 +344,29 @@ document.getElementById('date-search').addEventListener('input', function() {
 _GALLERY_DATE_HTML = (
     _BASE_STYLE
     + """
+<style>
+  .media-thumb { cursor:pointer; transition: opacity .15s; }
+  .media-thumb:hover { opacity:.8; }
+  #lb-backdrop {
+    display:none; position:fixed; inset:0; background:rgba(0,0,0,.88);
+    z-index:1050; align-items:center; justify-content:center; flex-direction:column;
+  }
+  #lb-backdrop.active { display:flex; }
+  #lb-content { max-width:92vw; max-height:84vh; object-fit:contain; }
+  #lb-content video { max-width:92vw; max-height:84vh; }
+  #lb-caption { color:#ccc; font-size:.8rem; margin-top:.5rem; max-width:92vw;
+                overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #lb-close  { position:fixed; top:1rem; right:1.25rem; font-size:2rem;
+               color:#fff; cursor:pointer; line-height:1; z-index:1060; }
+  #lb-prev, #lb-next {
+    position:fixed; top:50%; transform:translateY(-50%);
+    font-size:2.5rem; color:#fff; cursor:pointer; z-index:1060;
+    padding:.25rem .75rem; user-select:none;
+  }
+  #lb-prev { left:.5rem; }
+  #lb-next { right:.5rem; }
+</style>
+
 <div class="container" style="max-width:1200px">
   <div class="d-flex align-items-center gap-3 mb-3">
     <a href="/gallery" class="btn btn-sm btn-outline-secondary">← 戻る</a>
@@ -359,17 +382,21 @@ _GALLERY_DATE_HTML = (
     {% for f in files %}
     <div class="col media-item" data-name="{{ f.name }}">
       {% if f.type == "image" %}
-      <a href="/media/{{ f.path }}" target="_blank" title="{{ f.name }}">
-        <img src="/media/{{ f.path }}" class="rounded"
-             style="width:100%;aspect-ratio:1/1;object-fit:cover" alt="{{ f.name }}">
-      </a>
+      <img src="/media/{{ f.path }}" class="rounded media-thumb"
+           style="width:100%;aspect-ratio:1/1;object-fit:cover"
+           data-src="/media/{{ f.path }}" data-type="image" data-caption="{{ f.name }}"
+           alt="{{ f.name }}">
       {% elif f.type == "video" %}
-      <div>
-        <video controls class="rounded" style="width:100%;aspect-ratio:16/9;object-fit:cover"
-               title="{{ f.name }}">
+      <div class="position-relative media-thumb"
+           data-src="/media/{{ f.path }}" data-type="video" data-caption="{{ f.name }}"
+           style="aspect-ratio:16/9;background:#000;border-radius:.375rem;overflow:hidden">
+        <video muted preload="metadata"
+               style="width:100%;height:100%;object-fit:cover;pointer-events:none">
           <source src="/media/{{ f.path }}">
         </video>
-        <div class="small text-muted text-truncate mt-1" title="{{ f.name }}">{{ f.name }}</div>
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center">
+          <span style="font-size:2.5rem;opacity:.8">▶</span>
+        </div>
       </div>
       {% elif f.type == "audio" %}
       <div class="p-2 bg-white rounded border">
@@ -387,13 +414,89 @@ _GALLERY_DATE_HTML = (
   </div>
   {% endif %}
 </div>
+
+<!-- ライトボックス -->
+<div id="lb-backdrop">
+  <span id="lb-close" title="閉じる (Esc)">✕</span>
+  <span id="lb-prev" title="前へ (←)">‹</span>
+  <span id="lb-next" title="次へ (→)">›</span>
+  <div id="lb-content"></div>
+  <div id="lb-caption"></div>
+</div>
+
 <script>
-document.getElementById('file-search').addEventListener('input', function() {
-  const q = this.value.toLowerCase();
-  document.querySelectorAll('.media-item').forEach(el => {
-    el.style.display = el.dataset.name.toLowerCase().includes(q) ? '' : 'none';
+(function () {
+  const thumbs = Array.from(document.querySelectorAll('.media-thumb'));
+  const backdrop = document.getElementById('lb-backdrop');
+  const content  = document.getElementById('lb-content');
+  const caption  = document.getElementById('lb-caption');
+  let cur = 0;
+
+  function visibleThumbs() {
+    return thumbs.filter(el => el.closest('.media-item').style.display !== 'none');
+  }
+
+  function open(idx) {
+    const vt = visibleThumbs();
+    if (!vt.length) return;
+    cur = ((idx % vt.length) + vt.length) % vt.length;
+    const el = vt[cur];
+    const src = el.dataset.src;
+    const type = el.dataset.type;
+    caption.textContent = el.dataset.caption || '';
+    content.innerHTML = '';
+    if (type === 'image') {
+      const img = document.createElement('img');
+      img.id = 'lb-content';
+      img.src = src;
+      img.style.cssText = 'max-width:92vw;max-height:84vh;object-fit:contain;border-radius:4px';
+      content.appendChild(img);
+    } else {
+      const v = document.createElement('video');
+      v.controls = true;
+      v.autoplay = true;
+      v.style.cssText = 'max-width:92vw;max-height:84vh;border-radius:4px';
+      const s = document.createElement('source');
+      s.src = src;
+      v.appendChild(s);
+      content.appendChild(v);
+    }
+    backdrop.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function close() {
+    content.innerHTML = '';
+    backdrop.classList.remove('active');
+    document.body.style.overflow = '';
+  }
+
+  function move(delta) { open(cur + delta); }
+
+  thumbs.forEach((el, i) => {
+    el.addEventListener('click', () => open(visibleThumbs().indexOf(el)));
   });
-});
+
+  document.getElementById('lb-close').addEventListener('click', close);
+  document.getElementById('lb-prev').addEventListener('click', () => move(-1));
+  document.getElementById('lb-next').addEventListener('click', () => move(1));
+  backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
+
+  document.addEventListener('keydown', e => {
+    if (!backdrop.classList.contains('active')) return;
+    if (e.key === 'Escape') close();
+    if (e.key === 'ArrowLeft')  move(-1);
+    if (e.key === 'ArrowRight') move(1);
+  });
+
+  // ファイル名フィルタ
+  document.getElementById('file-search').addEventListener('input', function () {
+    const q = this.value.toLowerCase();
+    document.querySelectorAll('.media-item').forEach(el => {
+      el.style.display = el.dataset.name.toLowerCase().includes(q) ? '' : 'none';
+    });
+  });
+})();
 </script>
 </body></html>
 """

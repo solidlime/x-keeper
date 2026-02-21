@@ -148,7 +148,7 @@ class MediaDownloader:
             # cookies あり = ログイン済み → conversations=true でスレッド全体を一括取得する
             cmd += ["--option", "extractor.twitter.conversations=true"]
         if self._pixiv_refresh_token:
-            cmd += ["-o", f"pixiv.refresh-token={self._pixiv_refresh_token}"]
+            cmd += ["-o", f"extractor.pixiv.refresh-token={self._pixiv_refresh_token}"]
 
         logger.info("gallery-dl ダウンロード開始: url=%s", url)
 
@@ -186,6 +186,9 @@ class MediaDownloader:
                     last_returncode,
                     result.stderr.strip(),
                 )
+
+        if result.stderr.strip():
+            logger.debug("gallery-dl stderr: %s", result.stderr.strip())
 
         files_after: set[Path] = set(dest_dir.iterdir())
         new_files = sorted(files_after - files_before)
