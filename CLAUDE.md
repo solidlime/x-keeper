@@ -32,11 +32,13 @@ python -m src.main
 └── Discord Bot 起動 (asyncio ベース、イベント駆動)
      ├── on_ready: 監視チャンネルの最新 100 件をスキャンして未処理メッセージを処理
      ├── on_message: X/Pixiv/Imgur の URL を検出したメッセージを自動処理
-     │    ├── Twitter URL → TwitterClient.get_thread(url) でスレッド収集
+     │    ├── X /media URL → MediaDownloader.download_user_media(url)
+     │    │    └── gallery-dl -D <日付フォルダ> + --filter で既取得IDをスキップ
+     │    ├── Twitter status URL → TwitterClient.get_thread(url) でスレッド収集
      │    │    └── gallery-dl --dump-json でスレッドを遡る (reply_id を解析)
      │    ├── Pixiv / Imgur URL → MediaDownloader.download_direct([url])
      │    └── MediaDownloader.download_all(tweet_urls)
-     │         └── gallery-dl -D <日付フォルダ> でメディアを保存
+     │         └── 既ダウンロード済み tweet_id をスキップ後 gallery-dl で保存
      └── _retry_queue_task (バックグラウンド)
           ├── RETRY_POLL_INTERVAL 秒ごとに Web UI リトライキューを処理
           └── SCAN_INTERVAL 秒ごとに未処理メッセージを定期スキャン (0=起動時のみ)
@@ -81,7 +83,8 @@ python -m src.main
 - ❌ リアクションは失敗を示す。Web UI の「失敗」タブからリトライ可能
 
 **対応サービス**:
-- **X (Twitter)**: URL パターン `twitter.com|x.com/*/status/*`。スレッド遡り対応
+- **X (Twitter) status**: URL パターン `twitter.com|x.com/*/status/*`。スレッド遡り対応
+- **X ユーザーメディア欄**: URL パターン `twitter.com|x.com/*/media`。ユーザーの全メディアを一括ダウンロード
 - **Pixiv**: URL パターン `pixiv.net/*/artworks/*`。`PIXIV_REFRESH_TOKEN` が必要
 - **Imgur**: URL パターン `imgur.com/*`（アルバム・ギャラリー・単体画像・i.imgur.com 直リンク）
 
@@ -128,9 +131,16 @@ python -m src.main
 - イベント委譲により動的読み込みコンテンツにも削除・ライトボックスが動作
 
 **LogStore** (`src/log_store.py`):
-- `{SAVE_PATH}/logs.json` に JSON 形式で保存 (最大 500 件)
-- `{SAVE_PATH}/retry_queue.json` にリトライキューを保存
+- `{SAVE_PATH}/_download_log.json` に JSON 形式で保存 (最大 500 件)
+- `{SAVE_PATH}/_retry_queue.json` にリトライキューを保存
+- `{SAVE_PATH}/_downloaded_ids.json` にダウンロード済み tweet ID のリストを保存 (重複防止用)
 - スレッドセーフ (`threading.Lock` 使用)
+
+**重複ダウンロード防止**:
+- `download_all()` は各ツイート URL の tweet_id を `_downloaded_ids.json` と照合し、既取得のものをスキップする
+- `download_user_media()` は gallery-dl の `--filter` オプションで既取得 tweet_id を除外する
+  - 除外リストはテンポラリファイル経由で渡す (コマンドライン長制限を回避)
+- ファイル名テンプレート `{author[name]}-{tweet_id}-{num:02d}.{ext}` から tweet_id を逆引きして自動登録する
 
 ### Docker
 

@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 TWITTER_URL_PATTERN = re.compile(
     r"https?://(?:twitter\.com|x\.com)/[A-Za-z0-9_]+/status/\d+"
 )
+# /media タブ: status URL より前に検出する (重複マッチ防止のため先行定義)
+X_MEDIA_PAGE_PATTERN = re.compile(
+    r"https?://(?:twitter\.com|x\.com)/[A-Za-z0-9_]+/media\b"
+)
 PIXIV_URL_PATTERN = re.compile(
     r"https?://(?:www\.)?pixiv\.net/(?:en/)?artworks/\d+"
 )
@@ -35,9 +39,14 @@ _REACTION_ERROR = "❌"
 
 
 def _find_media_urls(content: str) -> list[str]:
-    """メッセージ内の X/Twitter・Pixiv・Imgur の URL を全て返す。"""
+    """メッセージ内の X/Twitter・Pixiv・Imgur の URL を全て返す。
+
+    X_MEDIA_PAGE_PATTERN を先に検出することで /media URL が
+    TWITTER_URL_PATTERN にマッチしないようにする。
+    """
     return (
-        TWITTER_URL_PATTERN.findall(content)
+        X_MEDIA_PAGE_PATTERN.findall(content)
+        + TWITTER_URL_PATTERN.findall(content)
         + PIXIV_URL_PATTERN.findall(content)
         + IMGUR_URL_PATTERN.findall(content)
     )
@@ -117,7 +126,13 @@ class XKeeperBot(discord.Client):
         total_files = 0
         for url in urls:
             try:
-                if PIXIV_URL_PATTERN.search(url) or IMGUR_URL_PATTERN.search(url):
+                if X_MEDIA_PAGE_PATTERN.search(url):
+                    saved = self.downloader.download_user_media(url)
+                    if not saved:
+                        logger.info("新規メディアなし (全て取得済み): url=%s", url)
+                    else:
+                        total_files += len(saved)
+                elif PIXIV_URL_PATTERN.search(url) or IMGUR_URL_PATTERN.search(url):
                     saved = self.downloader.download_direct([url])
                     if not saved:
                         errors.append(f"ダウンロード失敗 (ファイルなし): {url}")

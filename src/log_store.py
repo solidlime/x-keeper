@@ -16,6 +16,7 @@ class LogStore:
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._log_file = self._data_dir / "_download_log.json"
         self._retry_file = self._data_dir / "_retry_queue.json"
+        self._ids_file = self._data_dir / "_downloaded_ids.json"
         self._lock = threading.Lock()
 
     # ── 内部ユーティリティ ────────────────────────────────────────────────────
@@ -117,3 +118,32 @@ class LogStore:
             if queue:
                 self._write(self._retry_file, [])
         return queue
+
+    # ── ダウンロード済み tweet ID 管理 ─────────────────────────────────────
+
+    def get_downloaded_ids(self) -> frozenset[str]:
+        """ダウンロード済みの tweet ID セットを返す。"""
+        with self._lock:
+            return frozenset(self._read_id_list())
+
+    def mark_downloaded(self, tweet_ids: list[str]) -> None:
+        """tweet ID リストをダウンロード済みとして記録する。"""
+        if not tweet_ids:
+            return
+        with self._lock:
+            ids = set(self._read_id_list())
+            ids.update(tweet_ids)
+            self._ids_file.write_text(
+                json.dumps(sorted(ids), ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+    def _read_id_list(self) -> list[str]:
+        """_downloaded_ids.json の内容をリストで返す (ロックなし)。"""
+        if not self._ids_file.exists():
+            return []
+        try:
+            data = json.loads(self._ids_file.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []

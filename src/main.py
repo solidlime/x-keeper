@@ -109,6 +109,7 @@ async def async_main() -> None:
         settings.save_path,
         settings.gallery_dl_cookies_file,
         settings.pixiv_refresh_token,
+        log_store,
     )
 
     channel_ids = settings.channel_ids
