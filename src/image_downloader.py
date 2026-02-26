@@ -13,7 +13,7 @@ from datetime import date
 from pathlib import Path
 
 from .log_store import LogStore
-from .models import SavedFile
+from .models import DownloadResult, SavedFile
 
 logger = logging.getLogger(__name__)
 
@@ -70,16 +70,17 @@ class MediaDownloader:
             "MediaDownloader を初期化しました: save_root=%s", save_root
         )
 
-    def download_all(self, tweet_urls: list[str]) -> list[SavedFile]:
+    def download_all(self, tweet_urls: list[str]) -> DownloadResult:
         """ツイート URL リストを全てダウンロードして保存する。
 
         既にダウンロード済みの tweet ID は自動的にスキップする。
+        スキップされた URL 数は DownloadResult.skipped_count で返す。
 
         Args:
             tweet_urls: ダウンロード対象のツイート URL リスト。
 
         Returns:
-            保存に成功した SavedFile のリスト。
+            DownloadResult: 新規保存ファイルのリストとスキップ件数。
 
         Raises:
             RuntimeError: 保存先ディレクトリの作成に失敗した場合。
@@ -96,9 +97,11 @@ class MediaDownloader:
         for url in tweet_urls:
             tid = _tweet_id_from_url(url)
             if tid and tid in downloaded_ids:
-                logger.info("スキップ (ダウンロード済み): tweet_id=%s", tid)
+                logger.info("重複のためスキップ (ダウンロード済み): tweet_id=%s", tid)
             else:
                 pending.append(url)
+
+        skipped_count = len(tweet_urls) - len(pending)
 
         saved: list[SavedFile] = []
         for url in pending:
@@ -116,12 +119,12 @@ class MediaDownloader:
                 self._log_store.mark_downloaded([tid])
 
         logger.info(
-            "ダウンロード完了: 対象=%d, スキップ=%d, 保存ファイル数=%d",
+            "ダウンロード完了: 対象=%d, 重複スキップ=%d, 保存ファイル数=%d",
             len(tweet_urls),
-            len(tweet_urls) - len(pending),
+            skipped_count,
             len(saved),
         )
-        return saved
+        return DownloadResult(saved=saved, skipped_count=skipped_count)
 
     def download_direct(self, urls: list[str]) -> list[SavedFile]:
         """Pixiv など Twitter 以外の URL を直接ダウンロードする。

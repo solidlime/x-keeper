@@ -15,6 +15,8 @@ eggs/
 .eggs/
 lib/
 lib64/
+# Flutter アプリの lib/ は除外しない
+!client/flutter_app/lib/
 parts/
 sdist/
 var/

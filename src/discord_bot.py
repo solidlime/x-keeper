@@ -36,6 +36,8 @@ IMGUR_URL_PATTERN = re.compile(
 _REACTION_OK = "✅"
 _REACTION_PROCESSING = "⏳"
 _REACTION_ERROR = "❌"
+# 全ツイートが重複ダウンロード済みのためスキップされた場合に付与する
+_REACTION_SKIPPED = "⏭️"
 
 
 def _find_media_urls(content: str) -> list[str]:
@@ -109,7 +111,8 @@ class XKeeperBot(discord.Client):
                 if message.author.bot:
                     continue
                 reactions = [str(r.emoji) for r in message.reactions]
-                if _REACTION_OK in reactions:
+                # ✅ (処理済み) と ⏭️ (全重複スキップ済み) はどちらも再処理不要
+                if _REACTION_OK in reactions or _REACTION_SKIPPED in reactions:
                     continue
                 if not _find_media_urls(message.content):
                     continue
@@ -125,6 +128,9 @@ class XKeeperBot(discord.Client):
         loop = asyncio.get_running_loop()
         errors: list[str] = []
         total_files = 0
+        # 全ツイートが重複ダウンロード済みでスキップされた URL の件数
+        all_duplicate_skipped_urls = 0
+
         for url in urls:
             try:
                 if X_MEDIA_PAGE_PATTERN.search(url):
@@ -150,13 +156,22 @@ class XKeeperBot(discord.Client):
                     if not thread.tweet_urls:
                         logger.info("メディアが見つかりませんでした: url=%s", url)
                         continue
-                    saved = await loop.run_in_executor(
+                    result = await loop.run_in_executor(
                         None, self.downloader.download_all, thread.tweet_urls
                     )
-                    if not saved:
+                    if result.skipped_count == len(thread.tweet_urls):
+                        # スレッド内の全ツイートが既ダウンロード済み → 重複のため中断
+                        logger.info(
+                            "重複のため中断: message_id=%d, url=%s, skipped=%d 件",
+                            message.id,
+                            url,
+                            result.skipped_count,
+                        )
+                        all_duplicate_skipped_urls += 1
+                    elif not result.saved:
                         errors.append(f"ダウンロード失敗 (ファイルなし): {url}")
                     else:
-                        total_files += len(saved)
+                        total_files += len(result.saved)
             except Exception as exc:
                 logger.error("処理エラー: url=%s, error=%s", url, exc)
                 errors.append(str(exc))
@@ -172,6 +187,21 @@ class XKeeperBot(discord.Client):
                 message.id, message.channel.id, urls, "; ".join(errors)
             )
             logger.warning("処理失敗: message_id=%d, errors=%s", message.id, errors)
+        elif total_files == 0 and all_duplicate_skipped_urls > 0:
+            # 新規ファイルなし・かつ全URL重複スキップ → ⏭️ で完了扱い (再試行不要)
+            try:
+                await message.remove_reaction(_REACTION_ERROR, self.user)
+            except discord.HTTPException:
+                pass
+            await message.add_reaction(_REACTION_SKIPPED)
+            self._log_store.append_success(
+                message.id, message.channel.id, urls, 0
+            )
+            logger.info(
+                "重複のためスキップ完了: message_id=%d, skipped_urls=%d",
+                message.id,
+                all_duplicate_skipped_urls,
+            )
         else:
             # 以前の ❌ があれば削除してから ✅ を追加
             try:
@@ -219,3 +249,55 @@ class XKeeperBot(discord.Client):
                     )
                 except Exception as exc:
                     logger.error("リトライ処理エラー: %s", exc)
+
+            # Chrome 拡張 / Android アプリから直接投入された URL キューを処理する
+            await self._process_api_queue()
+
+    async def _process_api_queue(self) -> None:
+        """API キューから URL を取り出し Discord コンテキストなしでダウンロードする。"""
+        urls = self._log_store.pop_api_queue()
+        if not urls:
+            return
+        logger.info("API キューを処理: %d 件", len(urls))
+        loop = asyncio.get_running_loop()
+        for url in urls:
+            await self._download_url_direct(url, loop)
+
+    async def _download_url_direct(
+        self, url: str, loop: asyncio.AbstractEventLoop
+    ) -> None:
+        """URL を Discord コンテキストなしで直接ダウンロードする。
+
+        Chrome 拡張や Android アプリから投入された URL を処理する。
+        結果はログに出力するが Discord リアクションは行わない。
+        """
+        logger.info("直接ダウンロード開始: url=%s", url)
+        try:
+            if X_MEDIA_PAGE_PATTERN.search(url):
+                saved = await loop.run_in_executor(
+                    None, self.downloader.download_user_media, url
+                )
+                logger.info("直接ダウンロード完了: url=%s, files=%d", url, len(saved))
+            elif PIXIV_URL_PATTERN.search(url) or IMGUR_URL_PATTERN.search(url):
+                saved = await loop.run_in_executor(
+                    None, self.downloader.download_direct, [url]
+                )
+                logger.info("直接ダウンロード完了: url=%s, files=%d", url, len(saved))
+            else:
+                thread = await loop.run_in_executor(
+                    None, self.twitter.get_thread, url
+                )
+                if not thread.tweet_urls:
+                    logger.info("メディアが見つかりませんでした: url=%s", url)
+                    return
+                result = await loop.run_in_executor(
+                    None, self.downloader.download_all, thread.tweet_urls
+                )
+                logger.info(
+                    "直接ダウンロード完了: url=%s, files=%d, skipped=%d",
+                    url,
+                    len(result.saved),
+                    result.skipped_count,
+                )
+        except Exception as exc:
+            logger.error("直接ダウンロードエラー: url=%s, error=%s", url, exc)

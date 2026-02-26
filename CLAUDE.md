@@ -50,7 +50,7 @@ python -m src.main
 |---|---|
 | `src/main.py` | エントリーポイント・asyncio ループ・Flask デーモン起動 |
 | `src/config.py` | `pydantic-settings` による設定クラス (`Settings`) |
-| `src/models.py` | データクラス: `TweetThread`, `SavedFile` |
+| `src/models.py` | データクラス: `TweetThread`, `SavedFile`, `DownloadResult` |
 | `src/discord_bot.py` | Discord Bot。チャンネル監視・メッセージ処理・リアクション管理・リトライ |
 | `src/twitter_client.py` | `gallery-dl --dump-json` でスレッドを遡り `TweetThread` を返す |
 | `src/image_downloader.py` | `gallery-dl -D` でメディアをダウンロードし `list[SavedFile]` を返す |
@@ -81,6 +81,7 @@ python -m src.main
 - ✅ リアクション済みのメッセージは再処理しない
 - ⏳ リアクションは処理中を示す (完了後に削除)
 - ❌ リアクションは失敗を示す。Web UI の「失敗」タブからリトライ可能
+- ⏭️ リアクションは「全ツイートが重複スキップ済み」を示す (再処理不要)
 
 **対応サービス**:
 - **X (Twitter) status**: URL パターン `twitter.com|x.com/*/status/*`。スレッド遡り対応
@@ -120,6 +121,10 @@ python -m src.main
 | `GET /logs` | 処理ログ (最新 100 件) |
 | `GET /failures` | 失敗リスト |
 | `POST /retry/<message_id>/<channel_id>` | リトライキューへ追加 |
+| `GET /api/health` | サーバー疎通確認 (Chrome 拡張 / Android アプリ用) |
+| `POST /api/queue` | URL を直接ダウンロードキューに追加。`{"url": "..."}` または `{"urls": [...]}` |
+| `GET /api/history/export` | ダウンロード済み tweet ID を TMH 互換フォーマットで返す |
+| `POST /api/history/import` | TMH 互換フォーマットの tweet ID をインポートし重複防止リストに追加 |
 
 **ギャラリー** (`/gallery`):
 - `GALLERY_THUMB_COUNT` (デフォルト50) 件に達するまでの日付を先読み表示 (サーバーサイドレンダリング)
@@ -134,6 +139,7 @@ python -m src.main
 - `{SAVE_PATH}/_download_log.json` に JSON 形式で保存 (最大 500 件)
 - `{SAVE_PATH}/_retry_queue.json` にリトライキューを保存
 - `{SAVE_PATH}/_downloaded_ids.json` にダウンロード済み tweet ID のリストを保存 (重複防止用)
+- `{SAVE_PATH}/_api_queue.json` に Chrome 拡張 / Android アプリから投入された URL キューを保存
 - スレッドセーフ (`threading.Lock` 使用)
 
 **重複ダウンロード防止**:
@@ -141,6 +147,28 @@ python -m src.main
 - `download_user_media()` は gallery-dl の `--filter` オプションで既取得 tweet_id を除外する
   - 除外リストはテンポラリファイル経由で渡す (コマンドライン長制限を回避)
 - ファイル名テンプレート `{author[name]}-{tweet_id}-{num:02d}.{ext}` から tweet_id を逆引きして自動登録する
+
+### クライアント (`client/`)
+
+サーバーに Discord を経由せず直接 URL を投入するクライアント群。
+
+| パス | 説明 |
+|---|---|
+| `client/chrome_extension/` | Chrome 拡張機能 (Manifest V3) |
+| `client/chrome_extension/manifest.json` | 拡張マニフェスト。host_permissions: `<all_urls>` |
+| `client/chrome_extension/background/service_worker.js` | オフラインキュー管理・HTTP 通信・SPA ナビゲーション検知 |
+| `client/chrome_extension/content_scripts/content.js` | X/Pixiv へのボタン注入 |
+| `client/chrome_extension/popup/` | ポップアップ UI (サーバーURL設定・キュー表示・履歴 export/import) |
+| `client/chrome_extension/icons/` | アイコン PNG (16/48/128px) + 生成スクリプト `make_icons.py` |
+| `client/flutter_app/` | Android APK (Flutter)。共有インテントで URL を受け取りサーバーに投入 |
+| `client/flutter_app/build_apk.bat` | APK ビルド用 Windows バッチ |
+| `client/xkeeper.user.js` | Tampermonkey スクリプト (非推奨。Chrome 拡張に移行) |
+
+**Chrome 拡張の動作**:
+- `chrome.storage.local` でサーバー URL とオフラインキューを管理 (`chrome.storage.sync` は Chrome 未サインイン環境で不安定なため使用しない)
+- サーバー未接続時は `chrome.storage.local` にキューを保存し、次回接続時に一括送信
+- SPA ナビゲーション検知: `chrome.webNavigation.onHistoryStateUpdated` → `chrome.tabs.sendMessage` → コンテンツスクリプト
+- ダウンロード履歴は TMH (TwitterMediaHarvest) 互換フォーマットで export/import 可能
 
 ### Docker
 

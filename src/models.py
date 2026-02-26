@@ -30,3 +30,14 @@ class SavedFile:
 
     date_folder: date
     """保存されたサブフォルダの日付。"""
+
+
+@dataclass
+class DownloadResult:
+    """download_all の処理結果。saved と skipped_count を分離して返す。"""
+
+    saved: list[SavedFile]
+    """新規保存されたファイルのリスト。"""
+
+    skipped_count: int
+    """重複のためスキップされたツイート URL 数 (既ダウンロード済み)。"""

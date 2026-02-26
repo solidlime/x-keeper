@@ -17,9 +17,10 @@ import secrets
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, redirect, render_template_string, request, send_from_directory, session
+from flask import Flask, jsonify, redirect, render_template_string, request, send_from_directory, session
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(32)
@@ -40,6 +41,65 @@ _log_store = None
 def set_log_store(store) -> None:
     global _log_store
     _log_store = store
+
+
+# ── CORS (Chrome 拡張 / Android アプリからの cross-origin リクエスト対応) ─────────
+
+@app.after_request
+def _add_cors_headers(response):
+    """全レスポンスに CORS ヘッダーを付与する。"""
+    response.headers.setdefault("Access-Control-Allow-Origin", "*")
+    response.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+    response.headers.setdefault("Access-Control-Allow-Headers", "Content-Type")
+    return response
+
+
+def _cors_preflight():
+    """OPTIONS プリフライトリクエストに対して 204 を返す。"""
+    response = app.make_response(("", 204))
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
+
+
+# X/Pixiv/Imgur URL を受け付けるパターン (discord_bot.py と同じ定義)
+_API_URL_PATTERN = re.compile(
+    r"https?://(?:"
+    r"(?:twitter\.com|x\.com)/[A-Za-z0-9_]+/(?:status/\d+|media)"
+    r"|(?:www\.)?pixiv\.net/(?:en/)?artworks/\d+"
+    r"|(?:i\.)?imgur\.com/[A-Za-z0-9/_\-.]+"
+    r")"
+)
+
+# tweet_id として有効な桁数 (10〜20 桁)
+_TWEET_ID_RE = re.compile(r"^\d{10,20}$")
+
+
+def _extract_tweet_ids_from_import(data: dict | list) -> list[str]:
+    """TwitterMediaHarvest 互換フォーマットまたは ID リストから tweet_id を抽出する。
+
+    対応フォーマット:
+      - TMH 形式: {"records": [{"tweetId": "123..."}, ...]}
+      - シンプルリスト: ["123...", "456...", ...]
+      - フラット辞書: {"data": [{"tweet_id": "123..."}, ...]}
+    """
+    ids: set[str] = set()
+    if isinstance(data, list):
+        # シンプルな ID 文字列リスト
+        for item in data:
+            if isinstance(item, str) and _TWEET_ID_RE.match(item):
+                ids.add(item)
+    elif isinstance(data, dict):
+        # TMH 形式 / フラット辞書
+        records = data.get("records") or data.get("data") or []
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            tid = rec.get("tweetId") or rec.get("tweet_id") or rec.get("id")
+            if tid and _TWEET_ID_RE.match(str(tid)):
+                ids.add(str(tid))
+    return sorted(ids)
 
 
 # ── .env ユーティリティ ────────────────────────────────────────────────────────
@@ -1552,6 +1612,111 @@ def retry(message_id: int, channel_id: int):
     if _log_store:
         _log_store.queue_retry(message_id, channel_id)
     return redirect("/failures?queued=1")
+
+
+# ── REST API (Tampermonkey / Android アプリ向け) ──────────────────────────────
+
+
+@app.route("/api/health")
+def api_health():
+    """サーバー疎通確認エンドポイント。クライアントが接続可能か確認するために使う。"""
+    return jsonify({"status": "ok", "version": "1.0"})
+
+
+@app.route("/api/queue", methods=["POST", "OPTIONS"])
+def api_queue():
+    """URL を直接ダウンロードキューに追加する。
+
+    Request body (JSON):
+        {"url": "https://x.com/user/status/123..."}
+
+    Response (202):
+        {"queued": true, "url": "https://..."}
+
+    複数 URL を一括投入する場合は {"urls": ["https://...", ...]} でも受け付ける。
+    """
+    if request.method == "OPTIONS":
+        return _cors_preflight()
+
+    data = request.get_json(silent=True) or {}
+
+    # 単一 URL または複数 URL のどちらにも対応する
+    raw_urls: list[str] = []
+    if "urls" in data:
+        raw_urls = [u.strip() for u in data["urls"] if isinstance(u, str)]
+    elif "url" in data:
+        raw_urls = [data["url"].strip()]
+
+    if not raw_urls:
+        return jsonify({"error": "url or urls is required"}), 400
+
+    accepted: list[str] = []
+    rejected: list[str] = []
+    for url in raw_urls:
+        if _API_URL_PATTERN.match(url):
+            if _log_store:
+                _log_store.queue_url_download(url)
+            accepted.append(url)
+        else:
+            rejected.append(url)
+
+    if not accepted:
+        return jsonify({"error": "no supported URLs", "rejected": rejected}), 400
+
+    return jsonify({"queued": True, "accepted": accepted, "rejected": rejected}), 202
+
+
+@app.route("/api/history/export")
+def api_history_export():
+    """ダウンロード済み tweet ID を TwitterMediaHarvest 互換フォーマットでエクスポートする。
+
+    Response:
+        {
+          "version": 1,
+          "exportedAt": "2024-01-01T00:00:00+00:00",
+          "records": [{"tweetId": "123...", "downloadedAt": null}, ...]
+        }
+    """
+    if not _log_store:
+        return jsonify({"error": "log store not available"}), 503
+
+    ids = sorted(_log_store.get_downloaded_ids())
+    records = [{"tweetId": tid, "downloadedAt": None} for tid in ids]
+    payload = {
+        "version": 1,
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "records": records,
+    }
+    return jsonify(payload)
+
+
+@app.route("/api/history/import", methods=["POST", "OPTIONS"])
+def api_history_import():
+    """TwitterMediaHarvest 互換フォーマットで tweet ID をインポートする。
+
+    Request body (JSON):
+        TMH 形式: {"records": [{"tweetId": "123..."}, ...]}
+        または単純リスト: ["123...", "456...", ...]
+
+    Response:
+        {"imported": N}
+    """
+    if request.method == "OPTIONS":
+        return _cors_preflight()
+
+    if not _log_store:
+        return jsonify({"error": "log store not available"}), 503
+
+    data = request.get_json(silent=True)
+    if data is None:
+        return jsonify({"error": "invalid JSON body"}), 400
+
+    tweet_ids = _extract_tweet_ids_from_import(data)
+    if not tweet_ids:
+        return jsonify({"error": "no valid tweet IDs found in request body"}), 400
+
+    _log_store.mark_downloaded(tweet_ids)
+    return jsonify({"imported": len(tweet_ids)})
 
 
 # ── エントリーポイント ─────────────────────────────────────────────────────────

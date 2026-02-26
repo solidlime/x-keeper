@@ -17,6 +17,8 @@ class LogStore:
         self._log_file = self._data_dir / "_download_log.json"
         self._retry_file = self._data_dir / "_retry_queue.json"
         self._ids_file = self._data_dir / "_downloaded_ids.json"
+        # Chrome 拡張 / Android アプリから直接投入されたダウンロード URL キュー
+        self._api_queue_file = self._data_dir / "_api_queue.json"
         self._lock = threading.Lock()
 
     # ── 内部ユーティリティ ────────────────────────────────────────────────────
@@ -147,3 +149,26 @@ class LogStore:
             return data if isinstance(data, list) else []
         except Exception:
             return []
+
+    # ── API 直接ダウンロードキュー ─────────────────────────────────────────────
+    # Chrome 拡張 / Android アプリから Discord を経由せずに
+    # 直接投入された URL を管理する。
+
+    def queue_url_download(self, url: str) -> None:
+        """URL を直接ダウンロードキューに追加する。重複 URL は追加しない。"""
+        with self._lock:
+            queue = self._read(self._api_queue_file)
+            if not any(e["url"] == url for e in queue):
+                queue.append({
+                    "url": url,
+                    "queued_at": datetime.now().isoformat(timespec="seconds"),
+                })
+                self._write(self._api_queue_file, queue)
+
+    def pop_api_queue(self) -> list[str]:
+        """直接ダウンロードキューの全 URL を取り出してクリアする。"""
+        with self._lock:
+            queue = self._read(self._api_queue_file)
+            if queue:
+                self._write(self._api_queue_file, [])
+        return [e["url"] for e in queue]

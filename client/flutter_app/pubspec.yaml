@@ -1,0 +1,37 @@
+name: xkeeper_client
+description: x-keeper Client — X/Pixiv メディアを x-keeper サーバーに送信するAndroidアプリ
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # HTTP 通信
+  http: ^1.2.1
+  # SharedPreferences でサーバー URL / オフラインキューを永続化
+  shared_preferences: ^2.2.3
+  # Android の共有インテントを受け取る
+  receive_sharing_intent: ^1.8.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  # アプリアイコン生成
+  flutter_launcher_icons: ^0.13.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icon.png
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icon.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#0f172a"
+  adaptive_icon_foreground: "assets/icon_foreground.png"
