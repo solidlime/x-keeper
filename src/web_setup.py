@@ -75,6 +75,11 @@ _API_URL_PATTERN = re.compile(
 # tweet_id として有効な桁数 (10〜20 桁)
 _TWEET_ID_RE = re.compile(r"^\d{10,20}$")
 
+# サムネイルキャッシュの設定
+_THUMBS_DIR = "_thumbs"           # {SAVE_PATH}/_thumbs/ 以下にキャッシュを保存する
+_THUMB_MAX_SIZE = (320, 320)      # サムネイルの最大辺長 (px)
+_THUMB_IMAGE_EXTS = frozenset({'.jpg', '.jpeg', '.png', '.webp', '.gif'})
+
 
 def _extract_tweet_ids_from_import(data: dict | list) -> list[str]:
     """TwitterMediaHarvest 互換フォーマットまたは ID リストから tweet_id を抽出する。
@@ -422,7 +427,7 @@ _GALLERY_INDEX_HTML = (
 <div class="col media-item" data-name="{{ f.name }}">
   <button class="del-btn" data-path="{{ f.path }}" title="削除">🗑</button>
   {% if f.type == "image" %}
-  <img src="/media/{{ f.path }}" class="rounded media-thumb"
+  <img src="/thumb/{{ f.path }}" loading="lazy" class="rounded media-thumb"
        style="width:100%;aspect-ratio:1/1;object-fit:cover"
        data-src="/media/{{ f.path }}" data-type="image" data-caption="{{ f.name }}"
        data-path="{{ f.path }}" alt="{{ f.name }}">
@@ -810,7 +815,7 @@ _THUMBS_FRAGMENT_HTML = """
   <div class="col media-item" data-name="{{ f.name }}">
     <button class="del-btn" data-path="{{ f.path }}" title="削除">🗑</button>
     {% if f.type == "image" %}
-    <img src="/media/{{ f.path }}" class="rounded media-thumb"
+    <img src="/thumb/{{ f.path }}" loading="lazy" class="rounded media-thumb"
          style="width:100%;aspect-ratio:1/1;object-fit:cover"
          data-src="/media/{{ f.path }}" data-type="image" data-caption="{{ f.name }}"
          data-path="{{ f.path }}" alt="{{ f.name }}">
@@ -902,7 +907,7 @@ _GALLERY_DATE_HTML = (
     <div class="col media-item" data-name="{{ f.name }}">
       <button class="del-btn" data-path="{{ f.path }}" title="削除">🗑</button>
       {% if f.type == "image" %}
-      <img src="/media/{{ f.path }}" class="rounded media-thumb"
+      <img src="/thumb/{{ f.path }}" loading="lazy" class="rounded media-thumb"
            style="width:100%;aspect-ratio:1/1;object-fit:cover"
            data-src="/media/{{ f.path }}" data-type="image" data-caption="{{ f.name }}"
            data-path="{{ f.path }}" alt="{{ f.name }}">
@@ -1548,6 +1553,61 @@ def gallery_thumbs(date_str: str):
     return render_template_string(_THUMBS_FRAGMENT_HTML, files=files)
 
 
+@app.route("/thumb/<path:filepath>")
+def serve_thumb(filepath: str):
+    """サムネイル JPEG を返す。未生成の場合は Pillow でリサイズしてキャッシュする。
+
+    画像以外 (動画・音声・その他) のリクエストには 415 を返す。
+    サムネイルは {SAVE_PATH}/_thumbs/{date}/{name}.jpg にキャッシュされる。
+    """
+    try:
+        target = (Path(_SAVE_PATH) / filepath).resolve()
+        save_root = Path(_SAVE_PATH).resolve()
+    except Exception:
+        return "invalid path", 400
+    if save_root not in target.parents:
+        return "forbidden", 403
+    if not target.is_file():
+        return "not found", 404
+    if target.suffix.lower() not in _THUMB_IMAGE_EXTS:
+        return "not an image", 415
+
+    # キャッシュパス: {SAVE_PATH}/_thumbs/{date}/{name}.jpg
+    thumb_rel = Path(filepath).with_suffix('.jpg')
+    thumb_abs = Path(_SAVE_PATH) / _THUMBS_DIR / thumb_rel
+
+    if not thumb_abs.exists():
+        try:
+            from PIL import Image  # noqa: PLC0415
+        except ImportError:
+            logger.error(
+                "Pillow がインストールされていません。pip install Pillow でインストールしてください。"
+            )
+            return "Pillow not installed", 500
+        try:
+            thumb_abs.parent.mkdir(parents=True, exist_ok=True)
+            with Image.open(target) as img:
+                img.thumbnail(_THUMB_MAX_SIZE, Image.LANCZOS)
+                # JPEG は透過非対応のため白背景に合成する
+                if img.mode in ('RGBA', 'LA'):
+                    bg = Image.new('RGB', img.size, (255, 255, 255))
+                    bg.paste(img, mask=img.split()[-1])
+                    img = bg
+                elif img.mode != 'RGB':
+                    img = img.convert('RGB')
+                img.save(thumb_abs, 'JPEG', quality=80, optimize=True)
+        except Exception as exc:
+            logger.error("サムネイル生成失敗: path=%s, error=%s", filepath, exc)
+            return "thumbnail generation failed", 500
+
+    response = send_from_directory(
+        str(Path(_SAVE_PATH) / _THUMBS_DIR),
+        thumb_rel.as_posix(),
+    )
+    response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+    return response
+
+
 @app.route("/media/<path:filepath>")
 def serve_media(filepath: str):
     return send_from_directory(_SAVE_PATH, filepath)
@@ -1567,6 +1627,10 @@ def delete_media():
     if not target.is_file():
         return "not found", 404
     target.unlink()
+    # サムネイルキャッシュも削除する
+    thumb_cache = (Path(_SAVE_PATH) / _THUMBS_DIR / filepath).with_suffix('.jpg')
+    if thumb_cache.exists():
+        thumb_cache.unlink()
     return "ok", 200
 
 
@@ -1664,6 +1728,18 @@ def api_queue():
         return jsonify({"error": "no supported URLs", "rejected": rejected}), 400
 
     return jsonify({"queued": True, "accepted": accepted, "rejected": rejected}), 202
+
+
+@app.route("/api/history/count")
+def api_history_count():
+    """ダウンロード済み tweet ID の件数を返す。
+
+    Response:
+        {"count": N}
+    """
+    if not _log_store:
+        return jsonify({"error": "log store not available"}), 503
+    return jsonify({"count": len(_log_store.get_downloaded_ids())})
 
 
 @app.route("/api/history/export")

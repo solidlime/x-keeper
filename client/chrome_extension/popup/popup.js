@@ -14,6 +14,7 @@ const $btnClear     = document.getElementById('btn-clear-queue');
 const $btnExport    = document.getElementById('btn-export');
 const $btnImport    = document.getElementById('btn-import');
 const $importFile   = document.getElementById('import-file');
+const $historyCount = document.getElementById('history-count');
 
 // ── ヘルパー ──────────────────────────────────────────────────────────────────
 
@@ -39,6 +40,10 @@ function send(msg) {
 function setStatus(online) {
   $statusBadge.textContent = online ? '接続中' : '未接続';
   $statusBadge.className   = online ? 'online'  : 'offline';
+}
+
+function renderHistoryCount(count) {
+  $historyCount.textContent = count != null ? `${count.toLocaleString()} 件ダウンロード済み` : '';
 }
 
 function renderQueue(queue) {
@@ -72,6 +77,7 @@ function applyStatus(res) {
   $serverUrl.value = res.serverUrl || '';
   setStatus(res.online);
   renderQueue(res.queue);
+  renderHistoryCount(res.historyCount ?? null);
 }
 
 init();
@@ -163,6 +169,9 @@ $importFile.addEventListener('change', () => {
     $btnImport.disabled = false;
     if (res.ok) {
       $btnImport.textContent = `${res.result.imported} 件 ✓`;
+      // インポート後に件数を最新化する
+      const status = await send({ type: 'GET_STATUS' });
+      if (status.ok) renderHistoryCount(status.historyCount ?? null);
       setTimeout(() => { $btnImport.textContent = 'インポート'; }, 2000);
     } else {
       $btnImport.textContent = 'インポート';

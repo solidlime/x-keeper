@@ -64,4 +64,36 @@ class ServerClient {
     }
     return res.body;
   }
+
+  /// ダウンロード済み tweet ID 数を返す。
+  Future<int> fetchHistoryCount() async {
+    final res = await http
+        .get(Uri.parse('$serverUrl/api/history/count'))
+        .timeout(_timeout);
+
+    if (res.statusCode != 200) {
+      throw Exception('HTTP ${res.statusCode}');
+    }
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    return (data['count'] as num).toInt();
+  }
+
+  /// TwitterMediaHarvest 互換フォーマットの tweet ID をインポートする。
+  ///
+  /// 成功した場合はインポートされた件数を返す。失敗した場合は例外をスローする。
+  Future<int> importHistory(String jsonData) async {
+    final res = await http
+        .post(
+          Uri.parse('$serverUrl/api/history/import'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonData,
+        )
+        .timeout(const Duration(seconds: 10));
+
+    if (res.statusCode != 200) {
+      throw Exception('HTTP ${res.statusCode}: ${res.body}');
+    }
+    final data = jsonDecode(res.body) as Map<String, dynamic>;
+    return (data['imported'] as num).toInt();
+  }
 }

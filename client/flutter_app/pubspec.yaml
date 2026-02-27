@@ -15,6 +15,10 @@ dependencies:
   shared_preferences: ^2.2.3
   # Android の共有インテントを受け取る
   receive_sharing_intent: ^1.8.0
+  # ダウンロード履歴 JSON のシステム共有 (エクスポート)
+  share_plus: ^9.0.0
+  # ダウンロード履歴 JSON ファイルの選択 (インポート)
+  file_picker: ^8.0.0
 
 dev_dependencies:
   flutter_test:

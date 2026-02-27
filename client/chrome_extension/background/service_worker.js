@@ -110,7 +110,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           const [online, queue, serverUrl] = await Promise.all([
             checkHealth(), getQueue(), getServerUrl(),
           ]);
-          sendResponse({ ok: true, online, queue, serverUrl });
+          // オンライン時のみ履歴件数を取得する (失敗しても接続状態には影響しない)
+          let historyCount = null;
+          if (online) {
+            try {
+              const r = await fetchWithTimeout(`${serverUrl}/api/history/count`, {}, 3000);
+              if (r.status === 200) historyCount = (await r.json()).count ?? null;
+            } catch { /* ignore */ }
+          }
+          sendResponse({ ok: true, online, queue, serverUrl, historyCount });
           break;
         }
 

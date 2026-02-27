@@ -11,3 +11,5 @@ pydantic==2.8.2
 # Web サーバー (ギャラリー UI)
 flask>=3.0.0
 python-dotenv>=1.0.0
+# サムネイル生成
+Pillow>=10.0.0

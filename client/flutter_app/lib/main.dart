@@ -6,9 +6,12 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'queue_store.dart';
@@ -272,7 +275,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('サーバー設定')),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -328,6 +331,12 @@ class _SettingsPageState extends State<SettingsPage> {
               icon: const Icon(Icons.save_outlined),
               label: const Text('保存'),
             ),
+
+            // ダウンロード履歴 (サーバーの保存済み件数確認 + TMH互換 export/import)
+            const SizedBox(height: 20),
+            const Divider(),
+            const SizedBox(height: 12),
+            _HistoryCard(serverUrl: widget.store.serverUrl),
           ],
         ),
       ),
@@ -422,6 +431,146 @@ class _HelpCard extends StatelessWidget {
             Text('3. サーバーが自動的にダウンロードする', style: TextStyle(fontSize: 13)),
             SizedBox(height: 6),
             Text('※ 未接続時はキューに保存し、\n   次回接続時に自動送信します', style: TextStyle(fontSize: 12, color: Colors.grey)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// URL バリデーション
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 履歴カード (設定画面下部)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// サーバーのダウンロード済み tweet ID 件数の確認・export/import を行うカード。
+class _HistoryCard extends StatefulWidget {
+  const _HistoryCard({required this.serverUrl});
+
+  final String serverUrl;
+
+  @override
+  State<_HistoryCard> createState() => _HistoryCardState();
+}
+
+class _HistoryCardState extends State<_HistoryCard> {
+  late final ServerClient _client;
+  int? _count;
+  bool _loading = true;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _client = ServerClient(widget.serverUrl);
+    if (widget.serverUrl.isNotEmpty) {
+      _fetchCount();
+    } else {
+      setState(() { _loading = false; _errorMessage = 'サーバー URL が未設定です'; });
+    }
+  }
+
+  Future<void> _fetchCount() async {
+    setState(() { _loading = true; _errorMessage = null; });
+    try {
+      final count = await _client.fetchHistoryCount();
+      if (mounted) setState(() { _count = count; _loading = false; });
+    } catch (e) {
+      if (mounted) setState(() { _loading = false; _errorMessage = '取得失敗: $e'; });
+    }
+  }
+
+  Future<void> _export() async {
+    try {
+      final data = await _client.exportHistory();
+      final filename =
+          'xkeeper-history-${DateTime.now().toIso8601String().substring(0, 10)}.json';
+      await Share.share(data, subject: filename);
+    } catch (e) {
+      _showSnackBar('エクスポート失敗: $e', isError: true);
+    }
+  }
+
+  Future<void> _import() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+      withData: true,
+    );
+    if (result == null) return;
+
+    final bytes = result.files.first.bytes;
+    if (bytes == null) {
+      _showSnackBar('ファイルの読み込みに失敗しました', isError: true);
+      return;
+    }
+
+    try {
+      final content = utf8.decode(bytes);
+      final imported = await _client.importHistory(content);
+      await _fetchCount();
+      if (mounted) _showSnackBar('インポート完了: $imported 件');
+    } catch (e) {
+      _showSnackBar('インポート失敗: $e', isError: true);
+    }
+  }
+
+  void _showSnackBar(String msg, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: isError ? Colors.red : null,
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'ダウンロード履歴 (TMH互換)',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+            ),
+            const SizedBox(height: 8),
+            if (_loading)
+              const SizedBox(
+                height: 20,
+                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+              )
+            else if (_errorMessage != null)
+              Text(_errorMessage!, style: const TextStyle(color: Colors.red, fontSize: 12))
+            else
+              Text(
+                '${_count?.toString() ?? '?'} 件ダウンロード済み',
+                style: const TextStyle(fontSize: 13),
+              ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _export,
+                    icon: const Icon(Icons.upload_outlined, size: 16),
+                    label: const Text('エクスポート'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _import,
+                    icon: const Icon(Icons.download_outlined, size: 16),
+                    label: const Text('インポート'),
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
