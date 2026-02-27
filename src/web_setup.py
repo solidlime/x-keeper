@@ -12,6 +12,7 @@ import base64
 import hashlib
 import json
 import os
+import queue as _queue_module
 import re
 import secrets
 import urllib.error
@@ -20,7 +21,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Flask, jsonify, redirect, render_template_string, request, send_from_directory, session
+from flask import Flask, Response, jsonify, redirect, render_template_string, request, send_from_directory, session, stream_with_context
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(32)
@@ -478,6 +479,21 @@ _GALLERY_INDEX_HTML = (
     justify-content:space-between; align-items:center;
   }
   .date-accordion .date-body { padding:.75rem; }
+  /* 複数選択 */
+  .media-item.selected .media-thumb { outline:3px solid #1d9bf0; outline-offset:-3px; border-radius:.375rem; }
+  .media-item.sel-hover  { background:rgba(29,155,240,.06); border-radius:.375rem; }
+  #select-toolbar {
+    display:none; position:sticky; top:0; z-index:200;
+    background:#1e3a5f; border:1px solid #1d9bf0; border-radius:8px;
+    padding:8px 16px; margin-bottom:12px; gap:12px; align-items:center;
+  }
+  #select-toolbar.active { display:flex; }
+  #select-rect {
+    position:fixed; pointer-events:none; z-index:499;
+    border:2px solid #1d9bf0; background:rgba(29,155,240,.12); display:none;
+  }
+  /* ライトボックス取得元リンク */
+  #lb-source { margin-top:4px; min-height:18px; }
   /* ライトボックス */
   #lb-backdrop {
     display:none; position:fixed; inset:0; background:rgba(0,0,0,.88);
@@ -501,6 +517,15 @@ _GALLERY_INDEX_HTML = (
   #lb-hint { position:fixed; bottom:1rem; left:50%; transform:translateX(-50%);
              color:#aaa; font-size:.75rem; pointer-events:none; z-index:1060; }
 </style>
+
+<!-- 複数選択ツールバー (Ctrl+クリックまたはドラッグ選択時に表示) -->
+<div id="select-toolbar">
+  <span id="select-count" style="color:#90cdf4;font-weight:600"></span>
+  <button id="btn-delete-selected" class="btn btn-sm btn-danger">まとめて削除</button>
+  <button id="btn-clear-selection" class="btn btn-sm btn-outline-secondary ms-auto">選択解除</button>
+</div>
+<!-- ドラッグ選択矩形 -->
+<div id="select-rect"></div>
 
 <div class="container" style="max-width:1200px">
   <div class="d-flex align-items-center gap-3 mb-3">
@@ -554,6 +579,7 @@ _GALLERY_INDEX_HTML = (
   <span id="lb-next"   title="次へ (→)">›</span>
   <div id="lb-content"></div>
   <div id="lb-caption"></div>
+  <div id="lb-source"></div>
   <div id="lb-hint">ホイール / ピンチ: ズーム　ダブルクリック: リセット　Del: 削除</div>
 </div>
 
@@ -562,6 +588,7 @@ _GALLERY_INDEX_HTML = (
   const backdrop = document.getElementById('lb-backdrop');
   const content  = document.getElementById('lb-content');
   const caption  = document.getElementById('lb-caption');
+  const lbSource = document.getElementById('lb-source');
   let cur = 0;
 
   // ── ズーム状態 ────────────────────────────────────────────────────────────
@@ -594,12 +621,25 @@ _GALLERY_INDEX_HTML = (
   }
 
   // ── ライトボックス開閉 ────────────────────────────────────────────────────
+
+  /** ファイル名から X ポスト URL を生成する。対応しない場合は null を返す。 */
+  function sourceUrl(filename) {
+    // X/Twitter ファイル名テンプレート: username-tweetid-01.ext
+    const m = (filename || '').match(/-(\\d{10,20})-\\d{2,}\\.\\w+$/);
+    return m ? `https://x.com/i/web/status/${m[1]}` : null;
+  }
+
   function open(idx) {
     const vt = visibleThumbs();
     if (!vt.length) return;
     cur = ((idx % vt.length) + vt.length) % vt.length;
     const el = vt[cur];
     caption.textContent = el.dataset.caption || '';
+    const url = sourceUrl(el.dataset.caption);
+    lbSource.innerHTML = url
+      ? `<a href="${url}" target="_blank" rel="noopener"
+             style="color:#60a5fa;font-size:.75rem;text-decoration:none">🔗 元ポストを開く</a>`
+      : '';
     content.innerHTML = '';
     scale = 1; tx = 0; ty = 0;
     if (el.dataset.type === 'image') {
@@ -633,21 +673,120 @@ _GALLERY_INDEX_HTML = (
   }
 
   // ── 削除 ──────────────────────────────────────────────────────────────────
+  async function deleteOne(path) {
+    const res = await fetch('/delete-media', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'path=' + encodeURIComponent(path),
+    });
+    return res.ok;
+  }
+
   async function deleteFile(path, onSuccess) {
     const name = path.split('/').pop();
     if (!confirm(`「${name}」を削除しますか？\nこの操作は取り消せません。`)) return;
     try {
-      const res = await fetch('/delete-media', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'path=' + encodeURIComponent(path),
-      });
-      if (!res.ok) { alert('削除に失敗しました'); return; }
+      if (!await deleteOne(path)) { alert('削除に失敗しました'); return; }
       onSuccess();
     } catch (e) {
       alert('削除に失敗しました: ' + e);
     }
   }
+
+  // ── 複数選択 ──────────────────────────────────────────────────────────────
+  const selectedPaths = new Set();
+
+  function updateToolbar() {
+    const toolbar   = document.getElementById('select-toolbar');
+    const countEl   = document.getElementById('select-count');
+    if (!toolbar || !countEl) return;
+    if (selectedPaths.size > 0) {
+      toolbar.classList.add('active');
+      countEl.textContent = `${selectedPaths.size} 件選択中`;
+    } else {
+      toolbar.classList.remove('active');
+    }
+  }
+
+  function toggleSelect(item) {
+    const thumb = item.querySelector('.media-thumb');
+    if (!thumb) return;
+    if (item.classList.contains('selected')) {
+      item.classList.remove('selected');
+      selectedPaths.delete(thumb.dataset.path);
+    } else {
+      item.classList.add('selected');
+      selectedPaths.add(thumb.dataset.path);
+    }
+    updateToolbar();
+  }
+
+  function clearSelection() {
+    document.querySelectorAll('.media-item.selected').forEach(el => el.classList.remove('selected'));
+    selectedPaths.clear();
+    updateToolbar();
+  }
+
+  document.getElementById('btn-delete-selected')?.addEventListener('click', async () => {
+    const paths = [...selectedPaths];
+    if (!paths.length) return;
+    if (!confirm(`${paths.length} 件をまとめて削除しますか？\nこの操作は取り消せません。`)) return;
+    for (const path of paths) {
+      try {
+        if (!await deleteOne(path)) continue;
+        const item = document.querySelector(`.media-thumb[data-path="${CSS.escape(path)}"]`)
+                     ?.closest('.media-item');
+        if (item) { item.classList.add('deleting'); setTimeout(() => item.remove(), 280); }
+      } catch { /* ネットワークエラーはスキップ */ }
+    }
+    clearSelection();
+  });
+
+  document.getElementById('btn-clear-selection')?.addEventListener('click', clearSelection);
+
+  // ── ドラッグ選択 ──────────────────────────────────────────────────────────
+  const selectRectEl = document.getElementById('select-rect');
+  let dragSel = { triggered: false, x0: 0, y0: 0 };
+
+  document.addEventListener('mousedown', e => {
+    if (backdrop.classList.contains('active')) return;
+    if (e.ctrlKey || e.metaKey) return;
+    if (e.target.closest('.del-btn, #select-toolbar, #lb-backdrop')) return;
+    if (!e.target.closest('#accordion-list')) return;
+    dragSel = { triggered: false, x0: e.clientX, y0: e.clientY };
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!dragSel.x0 && !dragSel.y0) return;
+    const dx = e.clientX - dragSel.x0, dy = e.clientY - dragSel.y0;
+    if (!dragSel.triggered && Math.hypot(dx, dy) > 5) {
+      dragSel.triggered = true;
+      selectRectEl.style.display = 'block';
+    }
+    if (!dragSel.triggered) return;
+    const x = Math.min(e.clientX, dragSel.x0), y = Math.min(e.clientY, dragSel.y0);
+    const w = Math.abs(dx), h = Math.abs(dy);
+    Object.assign(selectRectEl.style, {
+      left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px',
+    });
+    const rect = { left: x, top: y, right: x + w, bottom: y + h };
+    document.querySelectorAll('.media-item').forEach(item => {
+      const r = item.getBoundingClientRect();
+      const inside = r.left < rect.right && r.right > rect.left
+                  && r.top  < rect.bottom && r.bottom > rect.top;
+      item.classList.toggle('sel-hover', inside);
+    });
+  });
+
+  document.addEventListener('mouseup', e => {
+    if (!dragSel.triggered) { dragSel = { triggered: false, x0: 0, y0: 0 }; return; }
+    selectRectEl.style.display = 'none';
+    document.querySelectorAll('.media-item.sel-hover').forEach(item => {
+      item.classList.remove('sel-hover');
+      toggleSelect(item);
+    });
+    dragSel = { triggered: false, x0: 0, y0: 0 };
+  });
 
   // ── イベント委譲 (動的コンテンツ対応) ────────────────────────────────────
   document.addEventListener('click', e => {
@@ -662,6 +801,14 @@ _GALLERY_INDEX_HTML = (
       });
       return;
     }
+    // Ctrl+クリック: 選択トグル (ライトボックスは開かない)
+    if (e.ctrlKey || e.metaKey) {
+      const item = e.target.closest('.media-item');
+      if (item) { e.preventDefault(); toggleSelect(item); }
+      return;
+    }
+    // ドラッグ後はクリックを無視する
+    if (dragSel.triggered) return;
     // サムネイルクリック → ライトボックス
     const thumb = e.target.closest('.media-thumb');
     if (thumb) {
@@ -867,6 +1014,21 @@ _GALLERY_DATE_HTML = (
   }
   .col.media-item:hover .del-btn { opacity:1; }
   .col.media-item.deleting { opacity:0; transform:scale(.88); transition: opacity .25s, transform .25s; }
+  /* 複数選択 */
+  .media-item.selected .media-thumb { outline:3px solid #1d9bf0; outline-offset:-3px; border-radius:.375rem; }
+  .media-item.sel-hover  { background:rgba(29,155,240,.06); border-radius:.375rem; }
+  #select-toolbar {
+    display:none; position:sticky; top:0; z-index:200;
+    background:#1e3a5f; border:1px solid #1d9bf0; border-radius:8px;
+    padding:8px 16px; margin-bottom:12px; gap:12px; align-items:center;
+  }
+  #select-toolbar.active { display:flex; }
+  #select-rect {
+    position:fixed; pointer-events:none; z-index:499;
+    border:2px solid #1d9bf0; background:rgba(29,155,240,.12); display:none;
+  }
+  /* ライトボックス取得元リンク */
+  #lb-source { margin-top:4px; min-height:18px; }
   /* ライトボックス */
   #lb-backdrop {
     display:none; position:fixed; inset:0; background:rgba(0,0,0,.88);
@@ -890,6 +1052,15 @@ _GALLERY_DATE_HTML = (
   #lb-hint { position:fixed; bottom:1rem; left:50%; transform:translateX(-50%);
              color:#aaa; font-size:.75rem; pointer-events:none; z-index:1060; }
 </style>
+
+<!-- 複数選択ツールバー -->
+<div id="select-toolbar">
+  <span id="select-count" style="color:#90cdf4;font-weight:600"></span>
+  <button id="btn-delete-selected" class="btn btn-sm btn-danger">まとめて削除</button>
+  <button id="btn-clear-selection" class="btn btn-sm btn-outline-secondary ms-auto">選択解除</button>
+</div>
+<!-- ドラッグ選択矩形 -->
+<div id="select-rect"></div>
 
 <div class="container" style="max-width:1200px">
   <div class="d-flex align-items-center gap-3 mb-3">
@@ -949,15 +1120,17 @@ _GALLERY_DATE_HTML = (
   <span id="lb-next"   title="次へ (→)">›</span>
   <div id="lb-content"></div>
   <div id="lb-caption"></div>
+  <div id="lb-source"></div>
   <div id="lb-hint">ホイール / ピンチ: ズーム　ダブルクリック: リセット　Del: 削除</div>
 </div>
 
 <script>
 (function () {
-  const thumbs  = Array.from(document.querySelectorAll('.media-thumb'));
+  const thumbs   = Array.from(document.querySelectorAll('.media-thumb'));
   const backdrop = document.getElementById('lb-backdrop');
   const content  = document.getElementById('lb-content');
   const caption  = document.getElementById('lb-caption');
+  const lbSource = document.getElementById('lb-source');
   let cur = 0;
 
   // ── ズーム状態 ────────────────────────────────────────────────────────────
@@ -988,12 +1161,24 @@ _GALLERY_DATE_HTML = (
     return thumbs.filter(el => el.closest('.media-item').style.display !== 'none');
   }
 
+  /** ファイル名から X ポスト URL を生成する。対応しない場合は null を返す。 */
+  function sourceUrl(filename) {
+    // X/Twitter ファイル名テンプレート: username-tweetid-01.ext
+    const m = (filename || '').match(/-(\\d{10,20})-\\d{2,}\\.\\w+$/);
+    return m ? `https://x.com/i/web/status/${m[1]}` : null;
+  }
+
   function open(idx) {
     const vt = visibleThumbs();
     if (!vt.length) return;
     cur = ((idx % vt.length) + vt.length) % vt.length;
     const el = vt[cur];
     caption.textContent = el.dataset.caption || '';
+    const url = sourceUrl(el.dataset.caption);
+    lbSource.innerHTML = url
+      ? `<a href="${url}" target="_blank" rel="noopener"
+             style="color:#60a5fa;font-size:.75rem;text-decoration:none">🔗 元ポストを開く</a>`
+      : '';
     content.innerHTML = '';
     scale = 1; tx = 0; ty = 0;
     if (el.dataset.type === 'image') {
@@ -1023,21 +1208,124 @@ _GALLERY_DATE_HTML = (
   function move(delta) { open(cur + delta); }
 
   // ── 削除 ──────────────────────────────────────────────────────────────────
+  async function deleteOne(path) {
+    const res = await fetch('/delete-media', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'path=' + encodeURIComponent(path),
+    });
+    return res.ok;
+  }
+
   async function deleteFile(path, onSuccess) {
     const name = path.split('/').pop();
     if (!confirm(`「${name}」を削除しますか？\nこの操作は取り消せません。`)) return;
     try {
-      const res = await fetch('/delete-media', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'path=' + encodeURIComponent(path),
-      });
-      if (!res.ok) { alert('削除に失敗しました'); return; }
+      if (!await deleteOne(path)) { alert('削除に失敗しました'); return; }
       onSuccess();
     } catch (e) {
       alert('削除に失敗しました: ' + e);
     }
   }
+
+  // ── 複数選択 ──────────────────────────────────────────────────────────────
+  const selectedPaths = new Set();
+
+  function updateToolbar() {
+    const toolbar = document.getElementById('select-toolbar');
+    const countEl = document.getElementById('select-count');
+    if (!toolbar || !countEl) return;
+    if (selectedPaths.size > 0) {
+      toolbar.classList.add('active');
+      countEl.textContent = `${selectedPaths.size} 件選択中`;
+    } else {
+      toolbar.classList.remove('active');
+    }
+  }
+
+  function toggleSelect(item) {
+    const thumb = item.querySelector('.media-thumb');
+    if (!thumb) return;
+    if (item.classList.contains('selected')) {
+      item.classList.remove('selected');
+      selectedPaths.delete(thumb.dataset.path);
+    } else {
+      item.classList.add('selected');
+      selectedPaths.add(thumb.dataset.path);
+    }
+    updateToolbar();
+  }
+
+  function clearSelection() {
+    document.querySelectorAll('.media-item.selected').forEach(el => el.classList.remove('selected'));
+    selectedPaths.clear();
+    updateToolbar();
+  }
+
+  document.getElementById('btn-delete-selected')?.addEventListener('click', async () => {
+    const paths = [...selectedPaths];
+    if (!paths.length) return;
+    if (!confirm(`${paths.length} 件をまとめて削除しますか？\nこの操作は取り消せません。`)) return;
+    for (const path of paths) {
+      try {
+        if (!await deleteOne(path)) continue;
+        const thumb = thumbs.find(t => t.dataset.path === path);
+        if (thumb) {
+          const idx = thumbs.indexOf(thumb);
+          if (idx !== -1) thumbs.splice(idx, 1);
+          const item = thumb.closest('.media-item');
+          if (item) { item.classList.add('deleting'); setTimeout(() => item.remove(), 280); }
+        }
+      } catch { /* ネットワークエラーはスキップ */ }
+    }
+    clearSelection();
+  });
+
+  document.getElementById('btn-clear-selection')?.addEventListener('click', clearSelection);
+
+  // ── ドラッグ選択 ──────────────────────────────────────────────────────────
+  const selectRectEl = document.getElementById('select-rect');
+  let dragSel = { triggered: false, x0: 0, y0: 0 };
+
+  document.addEventListener('mousedown', e => {
+    if (backdrop.classList.contains('active')) return;
+    if (e.ctrlKey || e.metaKey) return;
+    if (e.target.closest('.del-btn, #select-toolbar, #lb-backdrop')) return;
+    if (!e.target.closest('#file-grid')) return;
+    dragSel = { triggered: false, x0: e.clientX, y0: e.clientY };
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!dragSel.x0 && !dragSel.y0) return;
+    const dx = e.clientX - dragSel.x0, dy = e.clientY - dragSel.y0;
+    if (!dragSel.triggered && Math.hypot(dx, dy) > 5) {
+      dragSel.triggered = true;
+      selectRectEl.style.display = 'block';
+    }
+    if (!dragSel.triggered) return;
+    const x = Math.min(e.clientX, dragSel.x0), y = Math.min(e.clientY, dragSel.y0);
+    const w = Math.abs(dx), h = Math.abs(dy);
+    Object.assign(selectRectEl.style, {
+      left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px',
+    });
+    const rect = { left: x, top: y, right: x + w, bottom: y + h };
+    document.querySelectorAll('.media-item').forEach(item => {
+      const r = item.getBoundingClientRect();
+      const inside = r.left < rect.right && r.right > rect.left
+                  && r.top  < rect.bottom && r.bottom > rect.top;
+      item.classList.toggle('sel-hover', inside);
+    });
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragSel.triggered) { dragSel = { triggered: false, x0: 0, y0: 0 }; return; }
+    selectRectEl.style.display = 'none';
+    document.querySelectorAll('.media-item.sel-hover').forEach(item => {
+      item.classList.remove('sel-hover');
+      toggleSelect(item);
+    });
+    dragSel = { triggered: false, x0: 0, y0: 0 };
+  });
 
   // サムネイル削除ボタン
   document.querySelectorAll('.del-btn').forEach(btn => {
@@ -1057,7 +1345,17 @@ _GALLERY_DATE_HTML = (
   });
 
   thumbs.forEach(el => {
-    el.addEventListener('click', () => open(visibleThumbs().indexOf(el)));
+    el.addEventListener('click', e => {
+      // Ctrl+クリックは選択トグル
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        toggleSelect(el.closest('.media-item'));
+        return;
+      }
+      // ドラッグ後はクリックを無視する
+      if (dragSel.triggered) return;
+      open(visibleThumbs().indexOf(el));
+    });
   });
 
   document.getElementById('lb-close').addEventListener('click', close);
@@ -1791,8 +2089,51 @@ def api_history_import():
     if not tweet_ids:
         return jsonify({"error": "no valid tweet IDs found in request body"}), 400
 
-    _log_store.mark_downloaded(tweet_ids)
-    return jsonify({"imported": len(tweet_ids)})
+    added = _log_store.mark_downloaded(tweet_ids)
+    return jsonify({"imported": added})
+
+
+@app.route("/api/history/stream")
+def api_history_stream():
+    """SSE: ダウンロード済み tweet ID をリアルタイムでクライアントにプッシュする。
+
+    接続時に全 ID リストを `snapshot` イベントとして送信し、
+    以後は新規追加分のみを `update` イベントとして送信する。
+    Chrome 拡張のコンテンツスクリプトがこのエンドポイントを購読する。
+
+    Response: text/event-stream (SSE)
+        event: snapshot  → data: ["id1", "id2", ...]  (接続時: 全件)
+        event: update    → data: ["id3", "id4", ...]  (新規追加時)
+        : keepalive      → 25 秒ごとのコメント行 (接続維持)
+    """
+    if not _log_store:
+        return jsonify({"error": "log store not available"}), 503
+
+    def event_stream():
+        # 接続時: 現在の全 ID リストをスナップショットとして送信
+        ids = sorted(_log_store.get_downloaded_ids())
+        yield f"event: snapshot\ndata: {json.dumps(ids)}\n\n"
+
+        # 新規ダウンロードを購読してストリーム送信
+        q = _log_store.subscribe()
+        try:
+            while True:
+                try:
+                    new_ids = q.get(timeout=25)
+                    yield f"event: update\ndata: {json.dumps(new_ids)}\n\n"
+                except _queue_module.Empty:
+                    # 接続維持用コメント (SSE 仕様: コロン始まり行はコメント)
+                    yield ": keepalive\n\n"
+        finally:
+            _log_store.unsubscribe(q)
+
+    response = Response(
+        stream_with_context(event_stream()),
+        content_type="text/event-stream",
+    )
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"  # nginx バッファリング無効化
+    return response
 
 
 # ── エントリーポイント ─────────────────────────────────────────────────────────

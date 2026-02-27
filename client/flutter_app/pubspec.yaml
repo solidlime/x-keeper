@@ -19,6 +19,8 @@ dependencies:
   share_plus: ^9.0.0
   # ダウンロード履歴 JSON ファイルの選択 (インポート)
   file_picker: ^8.0.0
+  # アプリ内 WebView でギャラリーを表示
+  webview_flutter: ^4.7.0
 
 dev_dependencies:
   flutter_test:

@@ -9,9 +9,11 @@
 
 'use strict';
 
-const KEY_SERVER = 'xkeeper_server_url';
-const KEY_QUEUE  = 'xkeeper_offline_queue';
+const KEY_SERVER     = 'xkeeper_server_url';
+const KEY_QUEUE      = 'xkeeper_offline_queue';
+const KEY_RESULT_LOG = 'xkeeper_result_log';   // ダウンロードキュー結果の履歴
 const DEFAULT_SERVER = 'http://localhost:8989';
+const MAX_RESULT_LOG = 50;                     // 保持する最大件数
 
 // ── ストレージ (storage.local: sync より安定、Chrome アカウント不要) ──────────
 
@@ -69,6 +71,17 @@ async function checkHealth() {
   }
 }
 
+// ── 結果ログ ──────────────────────────────────────────────────────────────────
+
+/** キュー送信の結果を chrome.storage.local に記録する (最新 MAX_RESULT_LOG 件) */
+async function appendResultLog(entry) {
+  const d = await chrome.storage.local.get(KEY_RESULT_LOG);
+  const log = d[KEY_RESULT_LOG] || [];
+  log.unshift(entry);  // 最新を先頭に
+  if (log.length > MAX_RESULT_LOG) log.length = MAX_RESULT_LOG;
+  await chrome.storage.local.set({ [KEY_RESULT_LOG]: log });
+}
+
 async function flushQueue() {
   const q = await getQueue();
   if (!q.length) return;
@@ -93,9 +106,23 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           try {
             const data = await postUrls(urls);
             await flushQueue();
+            // 送信成功を結果ログに記録
+            await appendResultLog({
+              ts: new Date().toISOString(),
+              status: 'queued',
+              urls,
+              accepted: data.accepted || [],
+              rejected: data.rejected || [],
+            });
             sendResponse({ ok: true, data });
           } catch (e) {
             for (const u of urls) await enqueueOffline(u);
+            // オフラインキュー保存を結果ログに記録
+            await appendResultLog({
+              ts: new Date().toISOString(),
+              status: 'offline',
+              urls,
+            });
             sendResponse({ ok: false, error: String(e) });
           }
           break;
@@ -107,8 +134,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           break;
 
         case 'GET_STATUS': {
-          const [online, queue, serverUrl] = await Promise.all([
+          const [online, queue, serverUrl, logData] = await Promise.all([
             checkHealth(), getQueue(), getServerUrl(),
+            chrome.storage.local.get(KEY_RESULT_LOG),
           ]);
           // オンライン時のみ履歴件数を取得する (失敗しても接続状態には影響しない)
           let historyCount = null;
@@ -118,7 +146,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               if (r.status === 200) historyCount = (await r.json()).count ?? null;
             } catch { /* ignore */ }
           }
-          sendResponse({ ok: true, online, queue, serverUrl, historyCount });
+          const resultLog = logData[KEY_RESULT_LOG] || [];
+          sendResponse({ ok: true, online, queue, serverUrl, historyCount, resultLog });
           break;
         }
 
@@ -157,7 +186,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               },
               10000,
             );
-            sendResponse({ ok: true, result: await res.json() });
+            const data = await res.json();
+            // HTTP エラー (400, 503 等) はサービスワーカー側で ok:false に変換する
+            if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+            sendResponse({ ok: true, result: data });
           } catch (e) {
             sendResponse({ ok: false, error: String(e) });
           }

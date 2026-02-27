@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 import 'queue_store.dart';
 import 'server_client.dart';
@@ -164,6 +165,11 @@ class _HomePageState extends State<HomePage> {
         title: const Text('x-keeper', style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
           IconButton(
+            icon: const Icon(Icons.photo_library_outlined),
+            tooltip: 'ギャラリー',
+            onPressed: () => _openGallery(),
+          ),
+          IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: 'サーバー設定',
             onPressed: () => _openSettings(),
@@ -227,6 +233,20 @@ class _HomePageState extends State<HomePage> {
       setState(() => _client = ServerClient(widget.store.serverUrl));
       await _checkAndFlush();
     }
+  }
+
+  void _openGallery() {
+    final serverUrl = widget.store.serverUrl;
+    if (serverUrl.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('先にサーバー URL を設定してください')),
+      );
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => GalleryPage(serverUrl: serverUrl)),
+    );
   }
 }
 
@@ -573,6 +593,63 @@ class _HistoryCardState extends State<_HistoryCard> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ギャラリー画面
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// x-keeper サーバーの /gallery をアプリ内 WebView で表示する画面。
+class GalleryPage extends StatefulWidget {
+  const GalleryPage({super.key, required this.serverUrl});
+
+  final String serverUrl;
+
+  @override
+  State<GalleryPage> createState() => _GalleryPageState();
+}
+
+class _GalleryPageState extends State<GalleryPage> {
+  late final WebViewController _controller;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(NavigationDelegate(
+        onPageStarted: (_) => setState(() => _isLoading = true),
+        onPageFinished: (_) => setState(() => _isLoading = false),
+        onWebResourceError: (error) {
+          setState(() => _isLoading = false);
+        },
+      ))
+      ..loadRequest(Uri.parse('${widget.serverUrl}/gallery'));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('ギャラリー'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: '再読み込み',
+            onPressed: () => _controller.reload(),
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          WebViewWidget(controller: _controller),
+          if (_isLoading)
+            const Center(child: CircularProgressIndicator()),
+        ],
       ),
     );
   }

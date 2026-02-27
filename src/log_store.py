@@ -1,6 +1,7 @@
 """ダウンロードログと失敗リトライキューの永続化ストア。"""
 
 import json
+import queue
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,8 @@ class LogStore:
         # Chrome 拡張 / Android アプリから直接投入されたダウンロード URL キュー
         self._api_queue_file = self._data_dir / "_api_queue.json"
         self._lock = threading.Lock()
+        # SSE 購読者: mark_downloaded 時に新規 ID を通知するキューのセット
+        self._subscribers: set[queue.Queue[list[str]]] = set()
 
     # ── 内部ユーティリティ ────────────────────────────────────────────────────
 
@@ -128,17 +131,61 @@ class LogStore:
         with self._lock:
             return frozenset(self._read_id_list())
 
-    def mark_downloaded(self, tweet_ids: list[str]) -> None:
-        """tweet ID リストをダウンロード済みとして記録する。"""
+    def mark_downloaded(self, tweet_ids: list[str]) -> int:
+        """tweet ID リストをダウンロード済みとして記録し、純新規追加件数を返す。
+
+        既に登録済みの ID は無視される。新規追加された ID は SSE 購読者に通知される。
+        """
         if not tweet_ids:
-            return
+            return 0
+        new_ids: list[str] = []
         with self._lock:
-            ids = set(self._read_id_list())
-            ids.update(tweet_ids)
-            self._ids_file.write_text(
-                json.dumps(sorted(ids), ensure_ascii=False),
-                encoding="utf-8",
-            )
+            existing = set(self._read_id_list())
+            new_ids = [tid for tid in tweet_ids if tid not in existing]
+            if new_ids:
+                existing.update(new_ids)
+                self._ids_file.write_text(
+                    json.dumps(sorted(existing), ensure_ascii=False),
+                    encoding="utf-8",
+                )
+        # ロック解放後に購読者へ通知（デッドロック防止）
+        if new_ids:
+            self._notify_subscribers(new_ids)
+        return len(new_ids)
+
+    # ── SSE pub/sub ───────────────────────────────────────────────────────────
+
+    def subscribe(self) -> "queue.Queue[list[str]]":
+        """新規ダウンロード ID の通知を受け取るキューを登録して返す。
+
+        SSE エンドポイントが接続ごとに呼び出す。不要になったら必ず unsubscribe すること。
+        """
+        q: queue.Queue[list[str]] = queue.Queue(maxsize=200)
+        with self._lock:
+            self._subscribers.add(q)
+        return q
+
+    def unsubscribe(self, q: "queue.Queue[list[str]]") -> None:
+        """subscribe で登録したキューを解除する。"""
+        with self._lock:
+            self._subscribers.discard(q)
+
+    def _notify_subscribers(self, new_ids: list[str]) -> None:
+        """全購読者に新規 ID を非ブロッキングで通知する。
+
+        キューが満杯の購読者（応答が遅い接続）は切断済みとみなして削除する。
+        """
+        dead: set[queue.Queue[list[str]]] = set()
+        with self._lock:
+            subscribers = set(self._subscribers)
+        for q in subscribers:
+            try:
+                q.put_nowait(new_ids)
+            except queue.Full:
+                dead.add(q)
+        if dead:
+            with self._lock:
+                self._subscribers -= dead
 
     def _read_id_list(self) -> list[str]:
         """_downloaded_ids.json の内容をリストで返す (ロックなし)。"""

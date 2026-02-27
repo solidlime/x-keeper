@@ -2,19 +2,23 @@
 
 // ── DOM 参照 ──────────────────────────────────────────────────────────────────
 
-const $serverUrl    = document.getElementById('server-url');
-const $btnTest      = document.getElementById('btn-test');
-const $btnSave      = document.getElementById('btn-save');
-const $statusBadge  = document.getElementById('status-badge');
-const $queueSection = document.getElementById('queue-section');
-const $queueList    = document.getElementById('queue-list');
-const $queueCount   = document.getElementById('queue-count');
-const $btnFlush     = document.getElementById('btn-flush');
-const $btnClear     = document.getElementById('btn-clear-queue');
-const $btnExport    = document.getElementById('btn-export');
-const $btnImport    = document.getElementById('btn-import');
-const $importFile   = document.getElementById('import-file');
-const $historyCount = document.getElementById('history-count');
+const $serverUrl       = document.getElementById('server-url');
+const $btnTest         = document.getElementById('btn-test');
+const $btnSave         = document.getElementById('btn-save');
+const $btnGallery      = document.getElementById('btn-gallery');
+const $statusBadge     = document.getElementById('status-badge');
+const $queueSection    = document.getElementById('queue-section');
+const $queueList       = document.getElementById('queue-list');
+const $queueCount      = document.getElementById('queue-count');
+const $btnFlush        = document.getElementById('btn-flush');
+const $btnClear        = document.getElementById('btn-clear-queue');
+const $btnExport       = document.getElementById('btn-export');
+const $btnImport       = document.getElementById('btn-import');
+const $importFile      = document.getElementById('import-file');
+const $historyCount    = document.getElementById('history-count');
+const $resultLogSec    = document.getElementById('result-log-section');
+const $resultLogList   = document.getElementById('result-log-list');
+const $logCount        = document.getElementById('log-count');
 
 // ── ヘルパー ──────────────────────────────────────────────────────────────────
 
@@ -27,7 +31,6 @@ function send(msg) {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage(msg, (res) => {
       if (chrome.runtime.lastError) {
-        // サービスワーカーが起動中 or まだ準備できていない
         console.warn('[x-keeper]', chrome.runtime.lastError.message);
         resolve({ ok: false, error: chrome.runtime.lastError.message });
         return;
@@ -58,6 +61,40 @@ function renderQueue(queue) {
     .join('');
 }
 
+/** ISO 文字列を「HH:MM」または「M/D HH:MM」に変換する */
+function formatTime(iso) {
+  const d = new Date(iso);
+  const now = new Date();
+  const today = now.toDateString() === d.toDateString();
+  const hhmm = d.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+  if (today) return hhmm;
+  return `${d.getMonth() + 1}/${d.getDate()} ${hhmm}`;
+}
+
+function renderResultLog(log) {
+  if (!log || log.length === 0) {
+    $resultLogSec.style.display = 'none';
+    return;
+  }
+  $resultLogSec.style.display = '';
+  $logCount.textContent = `(${log.length} 件)`;
+  $resultLogList.innerHTML = log.map((entry) => {
+    const urls = entry.urls || [];
+    const urlStr = urls[0] || '';
+    const statusLabel = entry.status === 'queued' ? '送信済' : 'オフライン';
+    const statusClass = entry.status === 'queued' ? 'queued' : 'offline';
+    const rejected = (entry.rejected || []).length;
+    const extra = rejected > 0 ? ` (${rejected} 件スキップ)` : '';
+    return `<div class="log-entry">
+      <div class="log-url" title="${urlStr}">${urlStr}</div>
+      <div class="log-meta">
+        <span class="log-status ${statusClass}">${statusLabel}${extra}</span>
+        <span class="log-time">${formatTime(entry.ts)}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
 // ── 初期化 ────────────────────────────────────────────────────────────────────
 
 async function init() {
@@ -78,6 +115,7 @@ function applyStatus(res) {
   setStatus(res.online);
   renderQueue(res.queue);
   renderHistoryCount(res.historyCount ?? null);
+  renderResultLog(res.resultLog || []);
 }
 
 init();
@@ -119,6 +157,14 @@ $btnSave.addEventListener('click', async () => {
   setTimeout(() => { $btnSave.textContent = '保存'; }, 1500);
 });
 
+// ── ギャラリーリンク ──────────────────────────────────────────────────────────
+
+$btnGallery.addEventListener('click', async () => {
+  const res = await send({ type: 'GET_STATUS' });
+  const base = (res.ok && res.serverUrl) ? res.serverUrl : 'http://localhost:8989';
+  chrome.tabs.create({ url: `${base}/gallery` });
+});
+
 // ── オフラインキュー ──────────────────────────────────────────────────────────
 
 $btnFlush.addEventListener('click', async () => {
@@ -128,7 +174,10 @@ $btnFlush.addEventListener('click', async () => {
   renderQueue(res.queue || []);
   // 接続状態を再取得
   const status = await send({ type: 'GET_STATUS' });
-  if (status.ok) setStatus(status.online);
+  if (status.ok) {
+    setStatus(status.online);
+    renderResultLog(status.resultLog || []);
+  }
   $btnFlush.disabled = false;
   $btnFlush.textContent = '今すぐ送信';
 });
