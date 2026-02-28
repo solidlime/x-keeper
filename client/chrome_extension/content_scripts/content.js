@@ -2,7 +2,7 @@
  * x-keeper Chrome 拡張 — コンテンツスクリプト
  *
  * X (Twitter) / Pixiv のページに保存ボタンを注入し、
- * Service Worker 経由でダウンロード済み ID をリアルタイム同期する。
+ * Service Worker 経由でダウンロード済み ID・URL をリアルタイム同期する。
  * HTTP 通信はすべてサービスワーカーに委譲 (chrome.runtime.sendMessage)。
  */
 
@@ -19,6 +19,9 @@ const DEFAULT_SERVER  = 'http://localhost:8989';
 
 /** サーバーがダウンロード完了と報告した tweet ID のセット (Service Worker ポーリング経由で同期) */
 let _downloadedIds = new Set();
+
+/** サーバーがダウンロード完了と報告した URL のセット (Pixiv / Imgur 等 tweet_id なしサイト用) */
+let _downloadedUrls = new Set();
 
 /** このクライアントがキューに追加済みの tweet ID のセット (storage.local で永続化, X 専用) */
 let _queuedIds = new Set();
@@ -55,7 +58,7 @@ async function saveQueuedUrls() {
   await chrome.storage.local.set({ [KEY_QUEUED_URLS]: [..._queuedUrls] });
 }
 
-// ── ID 同期 (Service Worker 経由) ────────────────────────────────────────────
+// ── ID / URL 同期 (Service Worker 経由) ──────────────────────────────────────
 
 /**
  * Service Worker に GET_IDS メッセージを送りダウンロード済み ID を初期化する。
@@ -86,7 +89,24 @@ async function loadDownloadedIds() {
   updateAllTweetBadges();
 }
 
-// ── バッジ管理 ────────────────────────────────────────────────────────────────
+/**
+ * Service Worker に GET_URLS メッセージを送り Pixiv / Imgur のダウンロード済み URL を初期化する。
+ */
+async function loadDownloadedUrls() {
+  const res = await new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: 'GET_URLS' }, (r) => {
+      if (chrome.runtime.lastError) { resolve(null); return; }
+      resolve(r);
+    });
+  });
+  if (!res || !res.ok) return;
+  _downloadedUrls = new Set(res.urls);
+  // 完了済み URL はキュー済みセットから除去する
+  for (const url of _downloadedUrls) _queuedUrls.delete(url);
+  updateFloatingBtnState();
+}
+
+// ── バッジ管理 (X / Twitter) ──────────────────────────────────────────────────
 
 /** data-xk-tweet-id 属性から tweet ID を取得するヘルパー */
 function getTweetId(article) {
@@ -95,30 +115,23 @@ function getTweetId(article) {
 
 /**
  * ページ上の全ツイートカードのバッジを現在の ID セットで再描画する。
- * MutationObserver コールバックや SSE snapshot 受信時に呼ぶ。
+ * MutationObserver コールバックや IDS_UPDATED 受信時に呼ぶ。
  */
 function updateAllTweetBadges() {
   document.querySelectorAll('article[data-xk-tweet-id]').forEach((article) => {
     const id = getTweetId(article);
     if (id) applyBadgeState(article, id);
   });
-}
-
-/**
- * 指定 ID セットに対応するツイートカードのバッジを更新する。
- * SSE update イベント受信時に呼ぶ（全件更新より軽量）。
- */
-function updateBadgesForIds(ids) {
-  for (const id of ids) {
-    const article = document.querySelector(`article[data-xk-tweet-id="${id}"]`);
-    if (article) applyBadgeState(article, id);
-  }
+  // メディア欄のグリッドバッジも同時に更新する
+  document.querySelectorAll('[data-xk-grid-id]').forEach((el) => {
+    applyGridBadge(el, el.dataset.xkGridId);
+  });
 }
 
 /**
  * ツイートカードにバッジ状態を適用する。
  * - downloaded: 緑の ✓ バッジ (画像右下) + ボタンを緑に
- * - queued: 青の ⋯ バッジ (画像右下) + ボタンを青に
+ * - queued: 青の … バッジ (画像右下) + ボタンを青に
  * - none: バッジ削除 + ボタンをグレーに
  */
 function applyBadgeState(article, tweetId) {
@@ -193,6 +206,122 @@ function updateMediaBadges(article, state) {
   }
 }
 
+// ── バッジ管理 (メディア欄グリッド) ──────────────────────────────────────────
+
+/**
+ * メディア欄 (/username/media) のグリッドアイテムにバッジを重ねる。
+ * 画像リンク要素 (a[href*="/status/"]) を対象にする。
+ */
+function applyGridBadge(linkEl, tweetId) {
+  linkEl.querySelectorAll('.xk-grid-badge').forEach(el => el.remove());
+
+  const state = _downloadedIds.has(tweetId) ? 'downloaded'
+              : _queuedIds.has(tweetId)     ? 'queued'
+              : 'none';
+  if (state === 'none') return;
+
+  const color = state === 'downloaded' ? '#00ba7c' : '#1d9bf0';
+  const label = state === 'downloaded' ? '✓' : '…';
+  const title = state === 'downloaded' ? 'ダウンロード済み' : 'キュー済み';
+
+  const badge = document.createElement('div');
+  badge.className = 'xk-grid-badge';
+  badge.title = title;
+  badge.style.cssText = [
+    'position:absolute',
+    'bottom:6px',
+    'right:6px',
+    'z-index:10',
+    'width:22px',
+    'height:22px',
+    'border-radius:50%',
+    `background:${color}`,
+    'color:#fff',
+    'font-size:13px',
+    'font-weight:700',
+    'display:flex',
+    'align-items:center',
+    'justify-content:center',
+    'box-shadow:0 1px 4px rgba(0,0,0,.6)',
+    'pointer-events:none',
+    'line-height:1',
+  ].join(';');
+  badge.textContent = label;
+
+  if (getComputedStyle(linkEl).position === 'static') {
+    linkEl.style.position = 'relative';
+  }
+  linkEl.appendChild(badge);
+}
+
+/**
+ * メディア欄グリッドの各リンク要素を処理してバッジを付ける。
+ * MutationObserver から定期的に呼ばれる。
+ */
+function processMediaGridItems() {
+  // メディア欄では各メディアが <a href="/username/status/TWEETID"> で囲まれる
+  document.querySelectorAll('a[href*="/status/"]:not([data-xk-grid-id])').forEach((a) => {
+    // pbs.twimg.com 画像または動画を含む場合のみ処理する
+    if (!a.querySelector('img[src*="pbs.twimg.com"]') &&
+        !a.querySelector('video') &&
+        !a.querySelector('[data-testid="videoComponent"]')) return;
+
+    const href = a.getAttribute('href') || '';
+    const m = href.match(/\/status\/(\d+)/);
+    if (!m) return;
+
+    const tweetId = m[1];
+    a.dataset.xkGridId = tweetId;
+
+    // 右下にダウンロードボタンを追加する (バッジとは別の操作ボタン)
+    if (!a.querySelector('.xk-grid-btn')) {
+      const btn = document.createElement('button');
+      btn.className = 'xk-grid-btn';
+      btn.title = 'x-keeper で保存';
+      btn.style.cssText = [
+        'position:absolute',
+        'top:6px',
+        'left:6px',
+        'z-index:11',
+        'width:26px',
+        'height:26px',
+        'border-radius:50%',
+        'border:none',
+        'background:rgba(15,20,25,.75)',
+        'color:#fff',
+        'font-size:14px',
+        'display:flex',
+        'align-items:center',
+        'justify-content:center',
+        'cursor:pointer',
+        'box-shadow:0 1px 4px rgba(0,0,0,.5)',
+        'opacity:0',
+        'transition:opacity .15s',
+        'line-height:1',
+      ].join(';');
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 16l-5-5 1.4-1.4 2.6 2.6V4h2v8.2l2.6-2.6L17 11l-5 5zm-6 4v-2h12v2H6z"/></svg>';
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const tweetUrl = `https://x.com${href.split('?')[0]}`;
+        queueUrl(tweetUrl, null, tweetId);
+        // キュー後はバッジを即時更新する
+        applyGridBadge(a, tweetId);
+      });
+      // 親コンテナのホバーでボタンを表示する
+      const parent = a.parentElement;
+      if (parent) {
+        parent.addEventListener('mouseenter', () => { btn.style.opacity = '1'; });
+        parent.addEventListener('mouseleave', () => { btn.style.opacity = '0'; });
+      }
+      if (getComputedStyle(a).position === 'static') a.style.position = 'relative';
+      a.appendChild(btn);
+    }
+
+    applyGridBadge(a, tweetId);
+  });
+}
+
 // ── Toast ─────────────────────────────────────────────────────────────────────
 
 function toast(msg, isError) {
@@ -240,12 +369,7 @@ function queueUrl(url, btn, tweetId) {
     // X 以外のサイト (Pixiv 等): URL ベースのキュー済み状態管理
     _queuedUrls.add(url);
     saveQueuedUrls();
-    // フローティングボタンをキュー済み状態に即時更新
-    if (btn) {
-      const span = btn.querySelector('span');
-      if (span) span.textContent = 'キュー済み ✓';
-      btn.style.background = '#00ba7c';
-    }
+    updateFloatingBtnState();
   }
 
   chrome.runtime.sendMessage({ type: 'QUEUE_URL', url }, (res) => {
@@ -399,7 +523,7 @@ function onXNavigate() {
     return;
   }
 
-  // /username/media
+  // /username/media — 全メディア一括保存ボタン (個別バッジは MutationObserver が担当)
   const mm = path.match(/^\/([^/]+)\/media$/);
   if (mm) {
     setFloatingBtn('全メディアを保存', '#1d9bf0', (btn) =>
@@ -424,9 +548,13 @@ function setupXTwitter() {
   // popstate (ブラウザ戻る/進む)
   window.addEventListener('popstate', onXNavigate);
 
-  // タイムライン上のツイートカード監視
+  // タイムライン上のツイートカード + メディア欄グリッドアイテムを監視
   new MutationObserver(() => {
     document.querySelectorAll('article[data-testid="tweet"]:not([data-xk])').forEach(addTweetCardBtn);
+    // メディア欄 (/username/media) でのグリッドバッジ処理
+    if (/^\/[^/]+\/media$/.test(location.pathname)) {
+      processMediaGridItems();
+    }
   }).observe(document.body, { childList: true, subtree: true });
 
   onXNavigate();
@@ -434,21 +562,42 @@ function setupXTwitter() {
 
 // ── Pixiv ─────────────────────────────────────────────────────────────────────
 
+/**
+ * 現在のPixivページのURLと状態を見てフローティングボタンを更新する。
+ * downloaded > queued > none の優先順位で表示する。
+ */
+function updateFloatingBtnState() {
+  if (!/\/artworks\/\d+/.test(location.pathname)) return;
+  const url = location.href.split('?')[0];
+
+  if (_downloadedUrls.has(url)) {
+    // ダウンロード済み: 緑でクリック不可 (再ダウンロードは不要)
+    setFloatingBtn('ダウンロード済み ✓', '#00ba7c', () => {});
+  } else if (_queuedUrls.has(url)) {
+    // キュー済み: 青で表示
+    setFloatingBtn('キュー済み …', '#1d9bf0', (btn) => queueUrl(url, btn, null));
+  } else {
+    // 未保存: デフォルト色
+    setFloatingBtn('x-keeper で保存', '#0096fa', (btn) => queueUrl(url, btn, null));
+  }
+}
+
 function onPixivNavigate() {
   removeFloatingBtn();
   if (!/\/artworks\/\d+/.test(location.pathname)) return;
-  const url = location.href.split('?')[0];
-  // キュー済みの場合はボタンを緑でキュー済み状態で表示する
-  if (_queuedUrls.has(url)) {
-    setFloatingBtn('キュー済み ✓', '#00ba7c', (btn) => queueUrl(url, btn, null));
-  } else {
-    setFloatingBtn('x-keeper で保存', '#0096fa', (btn) => queueUrl(url, btn, null));
-  }
+  updateFloatingBtnState();
 }
 
 function setupPixiv() {
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === 'NAVIGATE') setTimeout(onPixivNavigate, 80);
+    // Service Worker からの URL 更新通知: ボタン状態を再描画する
+    if (msg.type === 'URLS_UPDATED') {
+      _downloadedUrls = new Set(msg.urls);
+      for (const url of _downloadedUrls) _queuedUrls.delete(url);
+      saveQueuedUrls();
+      updateFloatingBtnState();
+    }
   });
   window.addEventListener('popstate', onPixivNavigate);
   onPixivNavigate();
@@ -468,6 +617,8 @@ function setupPixiv() {
     loadDownloadedIds();
     setupXTwitter();
   } else if (host === 'www.pixiv.net') {
+    // ダウンロード済み URL を Service Worker 経由で取得してからボタン表示
+    loadDownloadedUrls();
     setupPixiv();
   }
 })();

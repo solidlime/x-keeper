@@ -20,6 +20,8 @@ class LogStore:
         self._ids_file = self._data_dir / "_downloaded_ids.json"
         # Chrome 拡張 / Android アプリから直接投入されたダウンロード URL キュー
         self._api_queue_file = self._data_dir / "_api_queue.json"
+        # Pixiv / Imgur など tweet_id を持たない URL のダウンロード済み管理
+        self._urls_file = self._data_dir / "_downloaded_urls.json"
         self._lock = threading.Lock()
         # SSE 購読者: mark_downloaded 時に新規 ID を通知するキューのセット
         self._subscribers: set[queue.Queue[list[str]]] = set()
@@ -217,6 +219,43 @@ class LogStore:
         except Exception:
             return []
 
+    # ── Pixiv / Imgur ダウンロード済み URL 管理 ──────────────────────────────────
+    # tweet_id を持たない URL (Pixiv 作品・Imgur 等) のダウンロード済み追跡。
+    # ファイルは {SAVE_PATH}/_downloaded_urls.json に保存する。
+
+    def mark_downloaded_url(self, url: str) -> bool:
+        """URL をダウンロード済みとして記録する。既登録の場合は False を返す。"""
+        with self._lock:
+            urls = set(self._read_url_list())
+            if url in urls:
+                return False
+            urls.add(url)
+            self._urls_file.write_text(
+                json.dumps(sorted(urls), ensure_ascii=False),
+                encoding="utf-8",
+            )
+        return True
+
+    def get_downloaded_urls(self) -> frozenset[str]:
+        """ダウンロード済みの URL セットを返す。"""
+        with self._lock:
+            return frozenset(self._read_url_list())
+
+    def count_downloaded_urls(self) -> int:
+        """ダウンロード済み URL の件数を返す。"""
+        with self._lock:
+            return len(self._read_url_list())
+
+    def _read_url_list(self) -> list[str]:
+        """_downloaded_urls.json の内容をリストで返す (ロックなし)。"""
+        if not self._urls_file.exists():
+            return []
+        try:
+            data = json.loads(self._urls_file.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
+
     # ── API 直接ダウンロードキュー ─────────────────────────────────────────────
     # Chrome 拡張 / Android アプリから Discord を経由せずに
     # 直接投入された URL を管理する。
@@ -231,6 +270,30 @@ class LogStore:
                     "queued_at": datetime.now().isoformat(timespec="seconds"),
                 })
                 self._write(self._api_queue_file, queue)
+
+    def peek_api_queue(self) -> list[dict]:
+        """直接ダウンロードキューの内容をクリアせずに返す。"""
+        with self._lock:
+            return list(self._read(self._api_queue_file))
+
+    def remove_api_url(self, url: str) -> bool:
+        """指定 URL を直接ダウンロードキューから削除する。削除できた場合は True を返す。"""
+        with self._lock:
+            queue = self._read(self._api_queue_file)
+            new_queue = [e for e in queue if e["url"] != url]
+            if len(new_queue) == len(queue):
+                return False
+            self._write(self._api_queue_file, new_queue)
+        return True
+
+    def clear_api_queue(self) -> int:
+        """直接ダウンロードキューを全件削除する。削除件数を返す。"""
+        with self._lock:
+            queue = self._read(self._api_queue_file)
+            count = len(queue)
+            if count:
+                self._write(self._api_queue_file, [])
+        return count
 
     def pop_api_queue(self) -> list[str]:
         """直接ダウンロードキューの全 URL を取り出してクリアする。"""

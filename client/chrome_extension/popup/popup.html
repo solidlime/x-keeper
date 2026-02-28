@@ -114,6 +114,45 @@
     }
     .queue-actions { display: flex; gap: 6px; }
 
+    /* サーバー処理キュー */
+    #api-queue-section { display: none; }
+    #api-queue-list {
+      max-height: 120px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      margin-bottom: 6px;
+    }
+    .api-queue-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 4px;
+      font-size: 11px;
+    }
+    .api-queue-url {
+      flex: 1;
+      color: #94a3b8;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .api-queue-del {
+      flex-shrink: 0;
+      padding: 1px 6px;
+      font-size: 10px;
+      border-radius: 4px;
+      background: #7f1d1d;
+      color: #fca5a5;
+      border: none;
+      cursor: pointer;
+    }
+    .api-queue-del:hover { opacity: 0.8; }
+
     /* 区切り線 */
     hr { border: none; border-top: 1px solid #1e293b; }
 
@@ -220,6 +259,13 @@
       </div>
     </div>
 
+    <!-- サーバー処理待ちキュー -->
+    <div id="api-queue-section">
+      <div class="section-label">処理待ちキュー <span id="api-queue-count"></span></div>
+      <div id="api-queue-list"></div>
+      <button id="btn-clear-api-queue" class="btn-danger btn-full">全件削除</button>
+    </div>
+
     <hr>
 
     <!-- 履歴 -->
@@ -249,7 +295,7 @@
     </div>
   </main>
 
-  <footer>x-keeper Client v1.1.0</footer>
+  <footer>x-keeper Client v1.2.0</footer>
 
   <input id="import-file" type="file" accept=".json" style="display:none">
   <script src="popup.js"></script>

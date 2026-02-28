@@ -8,6 +8,7 @@
  *  - ダウンロード済み ID のポーリング → 全タブへ IDS_UPDATED を通知
  *    (content.js からの直接 SSE 接続は HTTPS ページからの Mixed Content でブロックされるため、
  *     Service Worker が HTTP でポーリングして中継する)
+ *  - ダウンロード済み URL のポーリング (Pixiv / Imgur 等 tweet_id なしサイト用)
  */
 
 'use strict';
@@ -74,7 +75,7 @@ async function checkHealth() {
   }
 }
 
-// ── ダウンロード済み ID ポーリング ────────────────────────────────────────────
+// ── ダウンロード済み tweet ID ポーリング ─────────────────────────────────────
 
 /** ポーリングで取得したダウンロード済み tweet ID のキャッシュ */
 let _cachedIds = [];
@@ -117,10 +118,49 @@ async function pollDownloadedIds() {
   }
 }
 
+// ── ダウンロード済み URL ポーリング (Pixiv / Imgur 等) ───────────────────────
+
+/** ポーリングで取得したダウンロード済み URL のキャッシュ */
+let _cachedUrls = [];
+
+/** 最後に確認したダウンロード済み URL 件数 (変化検出用。-1 = 未取得) */
+let _cachedUrlCount = -1;
+
+/**
+ * サーバーからダウンロード済み URL リストをポーリングして _cachedUrls を更新する。
+ * カウントが変化していれば全 Pixiv タブに URLS_UPDATED を通知する。
+ */
+async function pollDownloadedUrls() {
+  try {
+    const base = await getServerUrl();
+
+    const countRes = await fetchWithTimeout(`${base}/api/history/urls/count`, {}, 3000);
+    if (countRes.status !== 200) return;
+    const { count } = await countRes.json();
+    if (count === _cachedUrlCount) return;
+
+    const urlsRes = await fetchWithTimeout(`${base}/api/history/urls`, {}, 10000);
+    if (urlsRes.status !== 200) return;
+    _cachedUrls    = await urlsRes.json();
+    _cachedUrlCount = count;
+
+    // Pixiv タブに通知 (将来的に他のサイトも追加する場合はここを拡張する)
+    const tabs = await chrome.tabs.query({ url: ['*://www.pixiv.net/*'] });
+    for (const tab of tabs) {
+      chrome.tabs.sendMessage(tab.id, { type: 'URLS_UPDATED', urls: _cachedUrls }).catch(() => {});
+    }
+  } catch {
+    // サーバー未接続など: 静かにスキップ
+  }
+}
+
 // 1 分ごとにポーリング (Manifest V3 alarm: Service Worker が起きていなくても実行される)
 chrome.alarms.create('poll-ids', { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'poll-ids') pollDownloadedIds();
+  if (alarm.name === 'poll-ids') {
+    pollDownloadedIds();
+    pollDownloadedUrls();
+  }
 });
 
 // ── 結果ログ ──────────────────────────────────────────────────────────────────
@@ -166,8 +206,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               accepted: data.accepted || [],
               rejected: data.rejected || [],
             });
-            // ダウンロードキューに追加できたので ID キャッシュを即時更新する
+            // ダウンロードキューに追加できたので ID・URL キャッシュを即時更新する
             pollDownloadedIds();
+            pollDownloadedUrls();
             sendResponse({ ok: true, data });
           } catch (e) {
             for (const u of urls) await enqueueOffline(u);
@@ -195,6 +236,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           // オンライン時のみ履歴件数とサーバー処理ログを取得する
           let historyCount = null;
           let serverLogs = [];
+          let apiQueue = [];
           if (online) {
             try {
               const r = await fetchWithTimeout(`${serverUrl}/api/history/count`, {}, 3000);
@@ -204,9 +246,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               const r = await fetchWithTimeout(`${serverUrl}/api/logs/recent`, {}, 3000);
               if (r.status === 200) serverLogs = await r.json();
             } catch { /* ignore */ }
+            try {
+              const r = await fetchWithTimeout(`${serverUrl}/api/queue/status`, {}, 3000);
+              if (r.status === 200) apiQueue = await r.json();
+            } catch { /* ignore */ }
           }
           const resultLog = logData[KEY_RESULT_LOG] || [];
-          sendResponse({ ok: true, online, queue, serverUrl, historyCount, resultLog, serverLogs });
+          sendResponse({ ok: true, online, queue, serverUrl, historyCount, resultLog, serverLogs, apiQueue });
           break;
         }
 
@@ -218,6 +264,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           break;
         }
 
+        case 'GET_URLS': {
+          // Pixiv / Imgur 等のダウンロード済み URL を取得してから返す
+          await pollDownloadedUrls();
+          sendResponse({ ok: true, urls: _cachedUrls });
+          break;
+        }
+
         case 'SET_SERVER_URL': {
           // URL に scheme がなければ補完する
           let url = (msg.url || '').trim().replace(/\/$/, '');
@@ -226,9 +279,51 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           }
           await chrome.storage.local.set({ [KEY_SERVER]: url });
           // サーバー URL が変わったのでキャッシュをリセットして再取得する
-          _cachedCount = -1;
+          _cachedCount    = -1;
+          _cachedUrlCount = -1;
           pollDownloadedIds();
+          pollDownloadedUrls();
           sendResponse({ ok: true, url });
+          break;
+        }
+
+        case 'DELETE_API_QUEUE_ITEM': {
+          // サーバーの直接ダウンロードキューから指定 URL を削除する
+          try {
+            const base = await getServerUrl();
+            const res = await fetchWithTimeout(
+              `${base}/api/queue/item`,
+              {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: msg.url }),
+              },
+              5000,
+            );
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+            sendResponse({ ok: true });
+          } catch (e) {
+            sendResponse({ ok: false, error: String(e) });
+          }
+          break;
+        }
+
+        case 'CLEAR_API_QUEUE': {
+          // サーバーの直接ダウンロードキューを全件削除する
+          try {
+            const base = await getServerUrl();
+            const res = await fetchWithTimeout(
+              `${base}/api/queue/clear`,
+              { method: 'POST' },
+              5000,
+            );
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+            sendResponse({ ok: true, deleted: data.deleted });
+          } catch (e) {
+            sendResponse({ ok: false, error: String(e) });
+          }
           break;
         }
 
@@ -289,3 +384,4 @@ chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
 
 flushQueue();
 pollDownloadedIds();
+pollDownloadedUrls();

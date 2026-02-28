@@ -626,11 +626,15 @@ _GALLERY_INDEX_HTML = (
 
   // ── ライトボックス開閉 ────────────────────────────────────────────────────
 
-  /** ファイル名から X ポスト URL を生成する。対応しない場合は null を返す。 */
+  /** ファイル名から元投稿 URL を推定する。対応しない場合は null を返す。 */
   function sourceUrl(filename) {
     // X/Twitter ファイル名テンプレート: username-tweetid-01.ext
-    const m = (filename || '').match(/-(\\d{10,20})-\\d{2,}\\.\\w+$/);
-    return m ? `https://x.com/i/web/status/${m[1]}` : null;
+    const mx = (filename || '').match(/-(\\d{10,20})-\\d{2,}\\.\\w+$/);
+    if (mx) return `https://x.com/i/web/status/${mx[1]}`;
+    // Pixiv ファイル名 (gallery-dl デフォルト): ARTWORKID_p0.ext
+    const mp = (filename || '').match(/^(\\d{5,12})(?:_p\\d+)?\\./);
+    if (mp) return `https://www.pixiv.net/artworks/${mp[1]}`;
+    return null;
   }
 
   function open(idx) {
@@ -1167,11 +1171,15 @@ _GALLERY_DATE_HTML = (
     return thumbs.filter(el => el.closest('.media-item').style.display !== 'none');
   }
 
-  /** ファイル名から X ポスト URL を生成する。対応しない場合は null を返す。 */
+  /** ファイル名から元投稿 URL を推定する。対応しない場合は null を返す。 */
   function sourceUrl(filename) {
     // X/Twitter ファイル名テンプレート: username-tweetid-01.ext
-    const m = (filename || '').match(/-(\\d{10,20})-\\d{2,}\\.\\w+$/);
-    return m ? `https://x.com/i/web/status/${m[1]}` : null;
+    const mx = (filename || '').match(/-(\\d{10,20})-\\d{2,}\\.\\w+$/);
+    if (mx) return `https://x.com/i/web/status/${mx[1]}`;
+    // Pixiv ファイル名 (gallery-dl デフォルト): ARTWORKID_p0.ext
+    const mp = (filename || '').match(/^(\\d{5,12})(?:_p\\d+)?\\./);
+    if (mp) return `https://www.pixiv.net/artworks/${mp[1]}`;
+    return null;
   }
 
   function open(idx) {
@@ -2098,6 +2106,88 @@ def api_history_ids():
     if not _log_store:
         return jsonify([]), 503
     return jsonify(sorted(_log_store.get_downloaded_ids()))
+
+
+@app.route("/api/history/urls/count")
+def api_history_urls_count():
+    """ダウンロード済み URL (Pixiv / Imgur 等) の件数を返す。
+
+    Service Worker がポーリング変化検出に使用する。
+
+    Response:
+        {"count": N}
+    """
+    if not _log_store:
+        return jsonify({"count": 0})
+    return jsonify({"count": _log_store.count_downloaded_urls()})
+
+
+@app.route("/api/history/urls")
+def api_history_urls():
+    """ダウンロード済み URL (Pixiv / Imgur 等) の全件リストを返す。
+
+    Chrome 拡張の Service Worker がポーリングでバッジ同期に使用する。
+
+    Response:
+        ["https://www.pixiv.net/artworks/123...", ...]
+    """
+    if not _log_store:
+        return jsonify([])
+    return jsonify(sorted(_log_store.get_downloaded_urls()))
+
+
+@app.route("/api/queue/status")
+def api_queue_status():
+    """直接ダウンロードキュー (処理待ち URL 一覧) を返す。
+
+    Chrome 拡張のポップアップがキューの状況を確認するために使用する。
+
+    Response:
+        [{"url": "https://...", "queued_at": "2024-..."}, ...]
+    """
+    if not _log_store:
+        return jsonify([])
+    return jsonify(_log_store.peek_api_queue())
+
+
+@app.route("/api/queue/item", methods=["DELETE", "OPTIONS"])
+def api_queue_item():
+    """直接ダウンロードキューから指定 URL を削除する。
+
+    Request body (JSON):
+        {"url": "https://..."}
+
+    Response (200):
+        {"deleted": true}
+    Response (404):
+        {"error": "not found"}
+    """
+    if request.method == "OPTIONS":
+        return _cors_preflight()
+    data = request.get_json(silent=True) or {}
+    url = data.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "url is required"}), 400
+    if not _log_store:
+        return jsonify({"error": "log store not available"}), 503
+    if _log_store.remove_api_url(url):
+        return jsonify({"deleted": True})
+    return jsonify({"error": "not found"}), 404
+
+
+@app.route("/api/queue/clear", methods=["POST", "OPTIONS"])
+def api_queue_clear():
+    """直接ダウンロードキューを全件削除する。
+
+    Response (200):
+        {"deleted": N}
+    """
+    if request.method == "OPTIONS":
+        return _cors_preflight()
+    if not _log_store:
+        return jsonify({"error": "log store not available"}), 503
+    count = _log_store.clear_api_queue()
+    return jsonify({"deleted": count})
 
 
 @app.route("/api/history/export")

@@ -2,25 +2,29 @@
 
 // ── DOM 参照 ──────────────────────────────────────────────────────────────────
 
-const $serverUrl       = document.getElementById('server-url');
-const $btnTest         = document.getElementById('btn-test');
-const $btnSave         = document.getElementById('btn-save');
-const $btnGallery      = document.getElementById('btn-gallery');
-const $statusBadge     = document.getElementById('status-badge');
-const $queueSection    = document.getElementById('queue-section');
-const $queueList       = document.getElementById('queue-list');
-const $queueCount      = document.getElementById('queue-count');
-const $btnFlush        = document.getElementById('btn-flush');
-const $btnClear        = document.getElementById('btn-clear-queue');
-const $btnExport       = document.getElementById('btn-export');
-const $btnImport       = document.getElementById('btn-import');
-const $importFile      = document.getElementById('import-file');
-const $historyCount    = document.getElementById('history-count');
-const $resultLogSec    = document.getElementById('result-log-section');
-const $resultLogList   = document.getElementById('result-log-list');
-const $logCount        = document.getElementById('log-count');
-const $serverLogSec    = document.getElementById('server-log-section');
-const $serverLogList   = document.getElementById('server-log-list');
+const $serverUrl        = document.getElementById('server-url');
+const $btnTest          = document.getElementById('btn-test');
+const $btnSave          = document.getElementById('btn-save');
+const $btnGallery       = document.getElementById('btn-gallery');
+const $statusBadge      = document.getElementById('status-badge');
+const $queueSection     = document.getElementById('queue-section');
+const $queueList        = document.getElementById('queue-list');
+const $queueCount       = document.getElementById('queue-count');
+const $btnFlush         = document.getElementById('btn-flush');
+const $btnClear         = document.getElementById('btn-clear-queue');
+const $apiQueueSection  = document.getElementById('api-queue-section');
+const $apiQueueList     = document.getElementById('api-queue-list');
+const $apiQueueCount    = document.getElementById('api-queue-count');
+const $btnClearApiQueue = document.getElementById('btn-clear-api-queue');
+const $btnExport        = document.getElementById('btn-export');
+const $btnImport        = document.getElementById('btn-import');
+const $importFile       = document.getElementById('import-file');
+const $historyCount     = document.getElementById('history-count');
+const $resultLogSec     = document.getElementById('result-log-section');
+const $resultLogList    = document.getElementById('result-log-list');
+const $logCount         = document.getElementById('log-count');
+const $serverLogSec     = document.getElementById('server-log-section');
+const $serverLogList    = document.getElementById('server-log-list');
 
 // ── ヘルパー ──────────────────────────────────────────────────────────────────
 
@@ -61,6 +65,49 @@ function renderQueue(queue) {
   $queueList.innerHTML = queue
     .map(u => `<p title="${u}">${u}</p>`)
     .join('');
+}
+
+/**
+ * サーバーの処理待ちキュー（直接ダウンロードキュー）を表示する。
+ * 各アイテムに個別削除ボタンを付ける。
+ */
+function renderApiQueue(items) {
+  if (!items || items.length === 0) {
+    $apiQueueSection.style.display = 'none';
+    return;
+  }
+  $apiQueueSection.style.display = '';
+  $apiQueueCount.textContent = `(${items.length} 件)`;
+  $apiQueueList.innerHTML = '';
+  for (const item of items) {
+    const url = item.url || '';
+    const div = document.createElement('div');
+    div.className = 'api-queue-item';
+    div.innerHTML = `
+      <span class="api-queue-url" title="${url}">${url}</span>
+      <button class="api-queue-del" data-url="${url}">削除</button>
+    `;
+    $apiQueueList.appendChild(div);
+  }
+  // イベント委譲で削除ボタンを処理する
+  $apiQueueList.querySelectorAll('.api-queue-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      const res = await send({ type: 'DELETE_API_QUEUE_ITEM', url: btn.dataset.url });
+      if (res.ok) {
+        btn.closest('.api-queue-item').remove();
+        const remaining = $apiQueueList.querySelectorAll('.api-queue-item').length;
+        if (remaining === 0) {
+          $apiQueueSection.style.display = 'none';
+        } else {
+          $apiQueueCount.textContent = `(${remaining} 件)`;
+        }
+      } else {
+        btn.disabled = false;
+        alert(`削除失敗: ${res.error}`);
+      }
+    });
+  });
 }
 
 /** ISO 文字列を「HH:MM」または「M/D HH:MM」に変換する */
@@ -141,6 +188,7 @@ function applyStatus(res) {
   $serverUrl.value = res.serverUrl || '';
   setStatus(res.online);
   renderQueue(res.queue);
+  renderApiQueue(res.apiQueue || []);
   renderHistoryCount(res.historyCount ?? null);
   renderServerLog(res.serverLogs || []);
   renderResultLog(res.resultLog || []);
@@ -170,6 +218,7 @@ $btnTest.addEventListener('click', async () => {
   const online = statusRes.ok ? statusRes.online : false;
   setStatus(online);
   renderQueue(statusRes.queue || []);
+  renderApiQueue(statusRes.apiQueue || []);
 
   // テスト結果を表示 (URL は保存済みなので失敗でも保存は成功)
   $btnTest.textContent = online ? '接続 ✓' : '未接続 ✗';
@@ -205,6 +254,7 @@ $btnFlush.addEventListener('click', async () => {
   if (status.ok) {
     setStatus(status.online);
     renderResultLog(status.resultLog || []);
+    renderApiQueue(status.apiQueue || []);
   }
   $btnFlush.disabled = false;
   $btnFlush.textContent = '今すぐ送信';
@@ -213,6 +263,21 @@ $btnFlush.addEventListener('click', async () => {
 $btnClear.addEventListener('click', async () => {
   await chrome.storage.local.remove('xkeeper_offline_queue');
   renderQueue([]);
+});
+
+// ── サーバー処理待ちキュー ────────────────────────────────────────────────────
+
+$btnClearApiQueue.addEventListener('click', async () => {
+  $btnClearApiQueue.disabled = true;
+  $btnClearApiQueue.textContent = '削除中…';
+  const res = await send({ type: 'CLEAR_API_QUEUE' });
+  if (res.ok) {
+    renderApiQueue([]);
+  } else {
+    alert(`全件削除失敗: ${res.error}`);
+  }
+  $btnClearApiQueue.disabled = false;
+  $btnClearApiQueue.textContent = '全件削除';
 });
 
 // ── 履歴エクスポート ──────────────────────────────────────────────────────────

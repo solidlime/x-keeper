@@ -285,6 +285,8 @@ class XKeeperBot(discord.Client):
                 )
                 logger.info("直接ダウンロード完了: url=%s, files=%d", url, len(saved))
                 self._log_store.append_api_success(url, len(saved))
+                # Pixiv / Imgur の場合は tweet_id がないため URL ベースで完了管理する
+                self._log_store.mark_downloaded_url(url)
             else:
                 thread = await loop.run_in_executor(
                     None, self.twitter.get_thread, url
