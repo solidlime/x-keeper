@@ -10,10 +10,11 @@
 
 // ── ストレージキー定数 ────────────────────────────────────────────────────────
 
-const KEY_SERVER      = 'xkeeper_server_url';
-const KEY_QUEUED      = 'xkeeper_queued_ids';   // キューに追加済みの tweet ID (X 専用)
-const KEY_QUEUED_URLS = 'xkeeper_queued_urls';  // キューに追加済みの URL (X 以外のサイト用)
-const DEFAULT_SERVER  = 'http://localhost:8989';
+const KEY_SERVER       = 'xkeeper_server_url';
+const KEY_QUEUED       = 'xkeeper_queued_ids';    // キューに追加済みの tweet ID (X 専用)
+const KEY_QUEUED_URLS  = 'xkeeper_queued_urls';   // キューに追加済みの URL (X 以外のサイト用)
+const KEY_QUEUED_ITEMS = 'xkeeper_queued_items';  // ポップアップ表示用メタデータ [{url, title}]
+const DEFAULT_SERVER   = 'http://localhost:8989';
 
 // ── ローカル状態 ──────────────────────────────────────────────────────────────
 
@@ -29,6 +30,13 @@ let _queuedIds = new Set();
 /** このクライアントがキューに追加済みの URL のセット (storage.local で永続化, X 以外のサイト用) */
 let _queuedUrls = new Set();
 
+/**
+ * Extension context invalidated フラグ。
+ * 一度 true になると以降の chrome API 呼び出しを即座にスキップして
+ * 警告ログの繰り返しを防ぐ。
+ */
+let _contextInvalidated = false;
+
 // ── ストレージユーティリティ ──────────────────────────────────────────────────
 
 async function getServerUrl() {
@@ -41,10 +49,12 @@ async function getServerUrl() {
  * Extension context が invalidated の場合は空オブジェクトを返す。
  */
 async function storageGet(keys) {
+  if (_contextInvalidated) return {};
   try {
     return await chrome.storage.local.get(keys);
   } catch (e) {
-    console.warn('[x-keeper] storage.get 失敗 (context invalidated?):', e.message);
+    _contextInvalidated = true;
+    console.warn('[x-keeper] storage.get 失敗 — Extension context invalidated。ページをリロードしてください。');
     return {};
   }
 }
@@ -54,10 +64,12 @@ async function storageGet(keys) {
  * Extension context が invalidated の場合は静かにスキップする。
  */
 async function storageSet(items) {
+  if (_contextInvalidated) return;
   try {
     await chrome.storage.local.set(items);
   } catch (e) {
-    console.warn('[x-keeper] storage.set 失敗 (context invalidated?):', e.message);
+    _contextInvalidated = true;
+    console.warn('[x-keeper] storage.set 失敗 — Extension context invalidated。ページをリロードしてください。');
   }
 }
 
@@ -70,18 +82,30 @@ async function storageSet(items) {
  * @returns {Promise<any>} レスポンス、またはエラー時は null
  */
 function runtimeSendMessage(msg) {
+  if (_contextInvalidated) return Promise.resolve(null);
   return new Promise((resolve) => {
     try {
       chrome.runtime.sendMessage(msg, (res) => {
         if (chrome.runtime.lastError) {
-          console.warn('[x-keeper] sendMessage 失敗:', chrome.runtime.lastError.message);
+          const errMsg = chrome.runtime.lastError.message || '';
+          if (errMsg.includes('Extension context invalidated')) {
+            if (!_contextInvalidated) {
+              _contextInvalidated = true;
+              console.warn('[x-keeper] Extension context invalidated — ページをリロードしてください。');
+            }
+          } else {
+            console.warn('[x-keeper] sendMessage 失敗:', errMsg);
+          }
           resolve(null);
           return;
         }
         resolve(res);
       });
     } catch (e) {
-      console.warn('[x-keeper] sendMessage 例外 (context invalidated?):', e.message);
+      if (!_contextInvalidated) {
+        _contextInvalidated = true;
+        console.warn('[x-keeper] Extension context invalidated — ページをリロードしてください。');
+      }
       resolve(null);
     }
   });
@@ -107,6 +131,21 @@ async function loadQueuedUrls() {
 /** キュー済みURLをストレージに保存する */
 async function saveQueuedUrls() {
   await storageSet({ [KEY_QUEUED_URLS]: [..._queuedUrls] });
+}
+
+/**
+ * ポップアップ表示用メタデータ ({url, title}) をストレージに追加する。
+ * 同一 URL の重複追加はスキップする。
+ * @param {string} url
+ * @param {string} title - ポップアップで表示するページタイトル
+ */
+async function addQueuedItem(url, title) {
+  const d = await storageGet(KEY_QUEUED_ITEMS);
+  const items = d[KEY_QUEUED_ITEMS] || [];
+  if (!items.some(i => i.url === url)) {
+    items.push({ url, title });
+    await storageSet({ [KEY_QUEUED_ITEMS]: items });
+  }
 }
 
 // ── ID / URL 同期 (Service Worker 経由) ──────────────────────────────────────
@@ -404,17 +443,32 @@ function toast(msg, isError) {
 async function queueUrl(url, btn, tweetId) {
   if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }
 
+  // ポップアップ表示用タイトルを生成する
+  let itemTitle = url;
+  if (tweetId) {
+    const mu = url.match(/(?:x|twitter)\.com\/([^/]+)\/status\//);
+    itemTitle = mu ? `@${mu[1]} のツイート` : url;
+  } else if (/\/artworks\/\d+/.test(url)) {
+    // Pixiv: ドキュメントタイトルから "- pixiv" サフィックスを除去
+    itemTitle = document.title.replace(/\s*[-|]\s*pixiv\s*$/i, '').trim() || url;
+  } else if (/\/media$/.test(url)) {
+    const mm = url.match(/(?:x|twitter)\.com\/([^/]+)\/media/);
+    itemTitle = mm ? `@${mm[1]} のメディア一覧` : url;
+  }
+
   // キュー済み状態を即時反映（サーバー応答を待たない）
   if (tweetId) {
     // X: tweet_id ベースのバッジ状態更新
     _queuedIds.add(tweetId);
     saveQueuedIds();
+    addQueuedItem(url, itemTitle);
     const article = btn?.closest('article[data-xk-tweet-id]');
     if (article) applyBadgeState(article, tweetId);
   } else {
     // X 以外のサイト (Pixiv 等): URL ベースのキュー済み状態管理
     _queuedUrls.add(url);
     saveQueuedUrls();
+    addQueuedItem(url, itemTitle);
     updateFloatingBtnState();
   }
 

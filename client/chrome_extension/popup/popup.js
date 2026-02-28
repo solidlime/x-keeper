@@ -175,48 +175,54 @@ function renderResultLog(log) {
 
 /**
  * content.js が chrome.storage.local に保存したキュー済みアイテムを表示する。
- * - xkeeper_queued_ids: X の tweet ID 配列
- * - xkeeper_queued_urls: Pixiv / Imgur 等の URL 配列
+ * xkeeper_queued_items: [{url, title}] 形式のメタデータを使い、
+ * タイトル + クリッカブルリンクで一覧表示する。
  * 件数が 0 の場合はセクション非表示。
  */
 async function loadQueuedItems() {
-  const data = await chrome.storage.local.get(['xkeeper_queued_ids', 'xkeeper_queued_urls']);
-  const ids  = data.xkeeper_queued_ids  || [];
-  const urls = data.xkeeper_queued_urls || [];
+  const data  = await chrome.storage.local.get('xkeeper_queued_items');
+  const items = data.xkeeper_queued_items || [];
 
-  if (ids.length === 0 && urls.length === 0) {
+  if (items.length === 0) {
     $queuedItemsSection.style.display = 'none';
     return;
   }
 
   $queuedItemsSection.style.display = '';
-  $queuedItemsCount.textContent = `(${ids.length + urls.length} 件)`;
+  $queuedItemsCount.textContent = `(${items.length} 件)`;
 
-  // リストをクリアしてから再構築 (textContent / createElement で XSS 対策)
+  // リストをクリアしてから再構築 (createElement で XSS 対策)
   $queuedItemsList.innerHTML = '';
+  for (const item of items) {
+    const div = document.createElement('div');
+    div.style.cssText = [
+      'display:flex',
+      'align-items:center',
+      'gap:6px',
+      'padding:4px 0',
+      'border-bottom:1px solid #1e293b',
+    ].join(';');
 
-  if (ids.length > 0) {
-    const p = document.createElement('p');
-    p.style.cssText = 'font-size:11px;color:#94a3b8;padding:2px 0;';
-    p.textContent = `ツイート ${ids.length} 件`;
-    $queuedItemsList.appendChild(p);
-  }
+    const a = document.createElement('a');
+    a.href = item.url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.title = item.url;
+    a.style.cssText = [
+      'flex:1',
+      'font-size:11px',
+      'color:#60a5fa',
+      'overflow:hidden',
+      'text-overflow:ellipsis',
+      'white-space:nowrap',
+      'text-decoration:none',
+    ].join(';');
+    a.textContent = item.title || item.url;
+    a.addEventListener('mouseenter', () => { a.style.textDecoration = 'underline'; });
+    a.addEventListener('mouseleave', () => { a.style.textDecoration = 'none'; });
 
-  // URL は先頭3件だけ表示、それ以上は「他 N 件」
-  const SHOW_MAX = 3;
-  const shown = urls.slice(0, SHOW_MAX);
-  for (const url of shown) {
-    const p = document.createElement('p');
-    p.title = url;
-    p.style.cssText = 'font-size:11px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:1px 0;';
-    p.textContent = url;
-    $queuedItemsList.appendChild(p);
-  }
-  if (urls.length > SHOW_MAX) {
-    const p = document.createElement('p');
-    p.style.cssText = 'font-size:11px;color:#64748b;padding:1px 0;';
-    p.textContent = `他 ${urls.length - SHOW_MAX} 件`;
-    $queuedItemsList.appendChild(p);
+    div.appendChild(a);
+    $queuedItemsList.appendChild(div);
   }
 }
 
@@ -335,7 +341,7 @@ $btnClearApiQueue.addEventListener('click', async () => {
 // ── キュー済みアイテムクリア ──────────────────────────────────────────────────
 
 $btnClearQueued.addEventListener('click', async () => {
-  await chrome.storage.local.remove(['xkeeper_queued_ids', 'xkeeper_queued_urls']);
+  await chrome.storage.local.remove(['xkeeper_queued_ids', 'xkeeper_queued_urls', 'xkeeper_queued_items']);
   $queuedItemsSection.style.display = 'none';
 });
 
