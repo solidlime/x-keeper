@@ -753,6 +753,8 @@ _GALLERY_INDEX_HTML = (
     if (e.ctrlKey || e.metaKey) return;
     if (e.target.closest('.del-btn, #select-toolbar, #lb-backdrop')) return;
     if (!e.target.closest('#accordion-list')) return;
+    // ブラウザの画像ネイティブドラッグを抑制してカスタム矩形選択のみ動作させる
+    e.preventDefault();
     dragSel = { triggered: false, x0: e.clientX, y0: e.clientY };
   });
 
@@ -1292,6 +1294,8 @@ _GALLERY_DATE_HTML = (
     if (e.ctrlKey || e.metaKey) return;
     if (e.target.closest('.del-btn, #select-toolbar, #lb-backdrop')) return;
     if (!e.target.closest('#file-grid')) return;
+    // ブラウザの画像ネイティブドラッグを抑制してカスタム矩形選択のみ動作させる
+    e.preventDefault();
     dragSel = { triggered: false, x0: e.clientX, y0: e.clientY };
   });
 
@@ -1806,7 +1810,11 @@ def gallery():
         date_data = []
         total_preloaded = 0
         for d in date_dirs:
-            files_sorted = sorted(f for f in d.iterdir() if f.is_file())
+            files_sorted = sorted(
+                (f for f in d.iterdir() if f.is_file()),
+                key=lambda f: f.stat().st_mtime,
+                reverse=True,
+            )
             count = len(files_sorted)
             if total_preloaded < thumb_count:
                 file_data = [
@@ -1829,7 +1837,7 @@ def gallery_date(date_str: str):
         return redirect("/gallery")
     files = [
         {"name": f.name, "type": _media_type(f.name), "path": f"{date_str}/{f.name}"}
-        for f in sorted(target.iterdir())
+        for f in sorted(target.iterdir(), key=lambda f: f.stat().st_mtime, reverse=True)
         if f.is_file()
     ]
     return render_template_string(_GALLERY_DATE_HTML, date=date_str, files=files)
@@ -1845,7 +1853,7 @@ def gallery_thumbs(date_str: str):
         return "", 404
     files = [
         {"name": f.name, "type": _media_type(f.name), "path": f"{date_str}/{f.name}"}
-        for f in sorted(target.iterdir())
+        for f in sorted(target.iterdir(), key=lambda f: f.stat().st_mtime, reverse=True)
         if f.is_file()
     ]
     return render_template_string(_THUMBS_FRAGMENT_HTML, files=files)
@@ -1943,7 +1951,7 @@ def gallery_search():
         for date_dir in sorted(save_path.iterdir(), reverse=True):
             if not date_dir.is_dir() or not re.match(r"^\d{4}-\d{2}-\d{2}$", date_dir.name):
                 continue
-            for f in sorted(date_dir.iterdir()):
+            for f in sorted(date_dir.iterdir(), key=lambda f: f.stat().st_mtime, reverse=True):
                 if f.is_file() and q in f.name.lower():
                     files.append({
                         "name": f.name,
@@ -2028,6 +2036,34 @@ def api_queue():
     return jsonify({"queued": True, "accepted": accepted, "rejected": rejected}), 202
 
 
+@app.route("/api/logs/recent")
+def api_logs_recent():
+    """直近のダウンロード処理結果を最新 5 件返す。
+
+    Chrome 拡張のポップアップがサーバー側の処理状態を確認するために使用する。
+    Discord 経由・API 直接投入の両方のログを返す。
+
+    Response:
+        [{"ts": "...", "status": "success"|"failure", "urls": [...],
+          "file_count": N, "error": "...", "source": "api"|"discord"}, ...]
+    """
+    if not _log_store:
+        return jsonify({"error": "log store not available"}), 503
+    logs = _log_store.get_recent_logs(limit=5)
+    result = [
+        {
+            "ts": entry.get("ts"),
+            "status": entry.get("status"),
+            "urls": entry.get("urls", []),
+            "file_count": entry.get("file_count"),
+            "error": entry.get("error"),
+            "source": entry.get("source", "discord"),
+        }
+        for entry in logs
+    ]
+    return jsonify(result)
+
+
 @app.route("/api/history/count")
 def api_history_count():
     """ダウンロード済み tweet ID の件数を返す。
@@ -2083,10 +2119,23 @@ def api_history_import():
 
     data = request.get_json(silent=True)
     if data is None:
+        app.logger.warning("history/import: JSON 解析失敗 (Content-Type=%s)", request.content_type)
         return jsonify({"error": "invalid JSON body"}), 400
 
     tweet_ids = _extract_tweet_ids_from_import(data)
     if not tweet_ids:
+        # フォーマット診断のためにトップレベルキーをログに出力する
+        if isinstance(data, dict):
+            app.logger.warning(
+                "history/import: tweet ID が見つかりません。トップレベルキー: %s",
+                list(data.keys()),
+            )
+        else:
+            app.logger.warning(
+                "history/import: tweet ID が見つかりません。データ型: %s, 先頭要素: %s",
+                type(data).__name__,
+                data[:3] if isinstance(data, list) else data,
+            )
         return jsonify({"error": "no valid tweet IDs found in request body"}), 400
 
     added = _log_store.mark_downloaded(tweet_ids)

@@ -138,16 +138,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             checkHealth(), getQueue(), getServerUrl(),
             chrome.storage.local.get(KEY_RESULT_LOG),
           ]);
-          // オンライン時のみ履歴件数を取得する (失敗しても接続状態には影響しない)
+          // オンライン時のみ履歴件数とサーバー処理ログを取得する
           let historyCount = null;
+          let serverLogs = [];
           if (online) {
             try {
               const r = await fetchWithTimeout(`${serverUrl}/api/history/count`, {}, 3000);
               if (r.status === 200) historyCount = (await r.json()).count ?? null;
             } catch { /* ignore */ }
+            try {
+              const r = await fetchWithTimeout(`${serverUrl}/api/logs/recent`, {}, 3000);
+              if (r.status === 200) serverLogs = await r.json();
+            } catch { /* ignore */ }
           }
           const resultLog = logData[KEY_RESULT_LOG] || [];
-          sendResponse({ ok: true, online, queue, serverUrl, historyCount, resultLog });
+          sendResponse({ ok: true, online, queue, serverUrl, historyCount, resultLog, serverLogs });
           break;
         }
 

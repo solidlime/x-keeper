@@ -278,11 +278,13 @@ class XKeeperBot(discord.Client):
                     None, self.downloader.download_user_media, url
                 )
                 logger.info("直接ダウンロード完了: url=%s, files=%d", url, len(saved))
+                self._log_store.append_api_success(url, len(saved))
             elif PIXIV_URL_PATTERN.search(url) or IMGUR_URL_PATTERN.search(url):
                 saved = await loop.run_in_executor(
                     None, self.downloader.download_direct, [url]
                 )
                 logger.info("直接ダウンロード完了: url=%s, files=%d", url, len(saved))
+                self._log_store.append_api_success(url, len(saved))
             else:
                 thread = await loop.run_in_executor(
                     None, self.twitter.get_thread, url
@@ -299,5 +301,7 @@ class XKeeperBot(discord.Client):
                     len(result.saved),
                     result.skipped_count,
                 )
+                self._log_store.append_api_success(url, len(result.saved))
         except Exception as exc:
             logger.error("直接ダウンロードエラー: url=%s, error=%s", url, exc)
+            self._log_store.append_api_failure(url, str(exc))

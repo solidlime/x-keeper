@@ -19,6 +19,8 @@ const $historyCount    = document.getElementById('history-count');
 const $resultLogSec    = document.getElementById('result-log-section');
 const $resultLogList   = document.getElementById('result-log-list');
 const $logCount        = document.getElementById('log-count');
+const $serverLogSec    = document.getElementById('server-log-section');
+const $serverLogList   = document.getElementById('server-log-list');
 
 // ── ヘルパー ──────────────────────────────────────────────────────────────────
 
@@ -71,6 +73,31 @@ function formatTime(iso) {
   return `${d.getMonth() + 1}/${d.getDate()} ${hhmm}`;
 }
 
+/** サーバー側のダウンロード処理結果（最新5件）を表示する */
+function renderServerLog(logs) {
+  if (!logs || logs.length === 0) {
+    $serverLogSec.style.display = 'none';
+    return;
+  }
+  $serverLogSec.style.display = '';
+  $serverLogList.innerHTML = logs.map((entry) => {
+    const url = (entry.urls || [])[0] || '';
+    const isSuccess = entry.status === 'success';
+    const statusLabel = isSuccess ? '成功' : '失敗';
+    const statusClass = isSuccess ? 'success' : 'failure';
+    const detail = isSuccess
+      ? (entry.file_count != null ? ` ${entry.file_count}件` : '')
+      : (entry.error ? ` — ${entry.error}` : '');
+    return `<div class="log-entry">
+      <div class="log-url" title="${url}">${url}</div>
+      <div class="log-meta">
+        <span class="log-status ${statusClass}">${statusLabel}${detail}</span>
+        <span class="log-time">${formatTime(entry.ts)}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
 function renderResultLog(log) {
   if (!log || log.length === 0) {
     $resultLogSec.style.display = 'none';
@@ -115,6 +142,7 @@ function applyStatus(res) {
   setStatus(res.online);
   renderQueue(res.queue);
   renderHistoryCount(res.historyCount ?? null);
+  renderServerLog(res.serverLogs || []);
   renderResultLog(res.resultLog || []);
 }
 

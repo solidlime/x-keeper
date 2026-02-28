@@ -82,6 +82,26 @@ class LogStore:
             "error": error,
         })
 
+    def append_api_success(self, url: str, file_count: int) -> None:
+        """Chrome 拡張 / Android アプリからの直接ダウンロード成功を記録する。"""
+        self._append_log({
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "status": "success",
+            "source": "api",
+            "urls": [url],
+            "file_count": file_count,
+        })
+
+    def append_api_failure(self, url: str, error: str) -> None:
+        """Chrome 拡張 / Android アプリからの直接ダウンロード失敗を記録する。"""
+        self._append_log({
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "status": "failure",
+            "source": "api",
+            "urls": [url],
+            "error": error,
+        })
+
     # ── ログ読み出し ──────────────────────────────────────────────────────────
 
     def get_recent_logs(self, limit: int = 100) -> list[dict]:

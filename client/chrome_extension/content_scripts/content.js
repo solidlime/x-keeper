@@ -63,7 +63,9 @@ async function connectSSE() {
   _eventSource = es;
 
   es.addEventListener('snapshot', (e) => {
-    _downloadedIds = new Set(JSON.parse(e.data));
+    const ids = JSON.parse(e.data);
+    console.log(`[x-keeper] SSE snapshot 受信: ${ids.length} 件`);
+    _downloadedIds = new Set(ids);
     // ダウンロード完了済みIDはキュー済みセットから削除する
     for (const id of _downloadedIds) _queuedIds.delete(id);
     updateAllTweetBadges();
@@ -71,6 +73,7 @@ async function connectSSE() {
 
   es.addEventListener('update', (e) => {
     const newIds = JSON.parse(e.data);
+    console.log(`[x-keeper] SSE update 受信: ${newIds.length} 件`);
     for (const id of newIds) {
       _downloadedIds.add(id);
       _queuedIds.delete(id);  // ダウンロード完了 → キュー済みから昇格
@@ -81,6 +84,7 @@ async function connectSSE() {
   });
 
   es.onerror = () => {
+    console.warn(`[x-keeper] SSE 接続エラー (サーバー: ${base})。5 秒後に再接続します`);
     es.close();
     _eventSource = null;
     _reconnectTimer = setTimeout(connectSSE, 5000);
