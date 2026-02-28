@@ -211,9 +211,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
 
         case 'GET_IDS': {
-          // キャッシュを即返却し、バックグラウンドでポーリングも実行して最新化する
+          // 必ずサーバーから最新の ID を取得してから返す
+          // (Service Worker 起動直後は _cachedIds が空のため await してから返す)
+          await pollDownloadedIds();
           sendResponse({ ok: true, ids: _cachedIds });
-          pollDownloadedIds();
           break;
         }
 

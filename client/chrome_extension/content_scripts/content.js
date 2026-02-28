@@ -2,7 +2,7 @@
  * x-keeper Chrome 拡張 — コンテンツスクリプト
  *
  * X (Twitter) / Pixiv のページに保存ボタンを注入し、
- * サーバーの SSE エンドポイントからダウンロード済み ID をリアルタイム同期する。
+ * Service Worker 経由でダウンロード済み ID をリアルタイム同期する。
  * HTTP 通信はすべてサービスワーカーに委譲 (chrome.runtime.sendMessage)。
  */
 
@@ -10,17 +10,21 @@
 
 // ── ストレージキー定数 ────────────────────────────────────────────────────────
 
-const KEY_SERVER = 'xkeeper_server_url';
-const KEY_QUEUED = 'xkeeper_queued_ids';   // このクライアントがキューに追加したツイートID
-const DEFAULT_SERVER = 'http://localhost:8989';
+const KEY_SERVER      = 'xkeeper_server_url';
+const KEY_QUEUED      = 'xkeeper_queued_ids';   // キューに追加済みの tweet ID (X 専用)
+const KEY_QUEUED_URLS = 'xkeeper_queued_urls';  // キューに追加済みの URL (X 以外のサイト用)
+const DEFAULT_SERVER  = 'http://localhost:8989';
 
 // ── ローカル状態 ──────────────────────────────────────────────────────────────
 
 /** サーバーがダウンロード完了と報告した tweet ID のセット (Service Worker ポーリング経由で同期) */
 let _downloadedIds = new Set();
 
-/** このクライアントがキューに追加済みの tweet ID のセット (storage.local で永続化) */
+/** このクライアントがキューに追加済みの tweet ID のセット (storage.local で永続化, X 専用) */
 let _queuedIds = new Set();
+
+/** このクライアントがキューに追加済みの URL のセット (storage.local で永続化, X 以外のサイト用) */
+let _queuedUrls = new Set();
 
 // ── ストレージユーティリティ ──────────────────────────────────────────────────
 
@@ -40,6 +44,17 @@ async function saveQueuedIds() {
   await chrome.storage.local.set({ [KEY_QUEUED]: [..._queuedIds] });
 }
 
+/** キュー済みURLをストレージから読み込んでローカルセットを初期化する (X 以外のサイト用) */
+async function loadQueuedUrls() {
+  const d = await chrome.storage.local.get(KEY_QUEUED_URLS);
+  _queuedUrls = new Set(d[KEY_QUEUED_URLS] || []);
+}
+
+/** キュー済みURLをストレージに保存する */
+async function saveQueuedUrls() {
+  await chrome.storage.local.set({ [KEY_QUEUED_URLS]: [..._queuedUrls] });
+}
+
 // ── ID 同期 (Service Worker 経由) ────────────────────────────────────────────
 
 /**
@@ -50,15 +65,24 @@ async function saveQueuedIds() {
  * Service Worker は HTTP/HTTPS 問わず fetch できるため、ポーリングを委譲する。
  */
 async function loadDownloadedIds() {
+  console.log('[x-keeper] ダウンロード済み ID を Service Worker に要求中...');
   const res = await new Promise((resolve) => {
     chrome.runtime.sendMessage({ type: 'GET_IDS' }, (r) => {
-      if (chrome.runtime.lastError) { resolve(null); return; }
+      if (chrome.runtime.lastError) {
+        console.warn('[x-keeper] GET_IDS 失敗:', chrome.runtime.lastError.message);
+        resolve(null);
+        return;
+      }
       resolve(r);
     });
   });
-  if (!res || !res.ok) return;
+  if (!res || !res.ok) {
+    console.warn('[x-keeper] GET_IDS レスポンス異常:', res);
+    return;
+  }
   _downloadedIds = new Set(res.ids);
   for (const id of _downloadedIds) _queuedIds.delete(id);
+  console.log(`[x-keeper] ダウンロード済み ID: ${_downloadedIds.size} 件`);
   updateAllTweetBadges();
 }
 
@@ -207,10 +231,21 @@ function queueUrl(url, btn, tweetId) {
 
   // キュー済み状態を即時反映（サーバー応答を待たない）
   if (tweetId) {
+    // X: tweet_id ベースのバッジ状態更新
     _queuedIds.add(tweetId);
     saveQueuedIds();
     const article = btn?.closest('article[data-xk-tweet-id]');
     if (article) applyBadgeState(article, tweetId);
+  } else {
+    // X 以外のサイト (Pixiv 等): URL ベースのキュー済み状態管理
+    _queuedUrls.add(url);
+    saveQueuedUrls();
+    // フローティングボタンをキュー済み状態に即時更新
+    if (btn) {
+      const span = btn.querySelector('span');
+      if (span) span.textContent = 'キュー済み ✓';
+      btn.style.background = '#00ba7c';
+    }
   }
 
   chrome.runtime.sendMessage({ type: 'QUEUE_URL', url }, (res) => {
@@ -403,7 +438,12 @@ function onPixivNavigate() {
   removeFloatingBtn();
   if (!/\/artworks\/\d+/.test(location.pathname)) return;
   const url = location.href.split('?')[0];
-  setFloatingBtn('x-keeper で保存', '#0096fa', (btn) => queueUrl(url, btn, null));
+  // キュー済みの場合はボタンを緑でキュー済み状態で表示する
+  if (_queuedUrls.has(url)) {
+    setFloatingBtn('キュー済み ✓', '#00ba7c', (btn) => queueUrl(url, btn, null));
+  } else {
+    setFloatingBtn('x-keeper で保存', '#0096fa', (btn) => queueUrl(url, btn, null));
+  }
 }
 
 function setupPixiv() {
@@ -419,8 +459,9 @@ function setupPixiv() {
 (async function init() {
   const host = location.hostname;
 
-  // キュー済みIDをストレージから復元
+  // キュー済み ID / URL をストレージから復元
   await loadQueuedIds();
+  await loadQueuedUrls();
 
   if (host === 'x.com' || host === 'twitter.com') {
     // ダウンロード済み ID を Service Worker 経由で取得してからページ構築
