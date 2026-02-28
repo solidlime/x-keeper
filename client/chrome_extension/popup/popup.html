@@ -266,6 +266,13 @@
       <button id="btn-clear-api-queue" class="btn-danger btn-full">全件削除</button>
     </div>
 
+    <!-- キュー済みアイテム (content.js がキューに追加した tweet / URL) -->
+    <div id="queued-items-section" style="display:none">
+      <div class="section-label">キュー済みアイテム <span id="queued-items-count"></span></div>
+      <div id="queued-items-list"></div>
+      <button id="btn-clear-queued" class="btn-danger btn-full" style="margin-top:6px">クリア</button>
+    </div>
+
     <hr>
 
     <!-- 履歴 -->
@@ -295,7 +302,7 @@
     </div>
   </main>
 
-  <footer>x-keeper Client v1.2.0</footer>
+  <footer>x-keeper Client v1.2.2</footer>
 
   <input id="import-file" type="file" accept=".json" style="display:none">
   <script src="popup.js"></script>

@@ -141,6 +141,8 @@ async function loadDownloadedUrls() {
   // 完了済み URL はキュー済みセットから除去する
   for (const url of _downloadedUrls) _queuedUrls.delete(url);
   updateFloatingBtnState();
+  // Pixiv サムネイル一覧のバッジを更新する
+  processPixivThumbnails();
 }
 
 // ── バッジ管理 (X / Twitter) ──────────────────────────────────────────────────
@@ -430,6 +432,66 @@ async function queueUrl(url, btn, tweetId) {
   if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
 }
 
+// ── Pixiv サムネイルバッジ ─────────────────────────────────────────────────────
+
+/**
+ * Pixiv ページ (検索結果・ユーザー作品一覧等) の artwork サムネイルリンクに
+ * ダウンロード済みバッジを付与する。
+ *
+ * Pixiv は React SPA のため MutationObserver で DOM 追加を検知して呼ぶ。
+ * 対象: a[href*="/artworks/"] で img を含む要素 (カードサムネイル)
+ * 除外: data-xk-pixiv-id が付いたもの (処理済み) と現在開いているページ自体
+ */
+function processPixivThumbnails() {
+  document.querySelectorAll('a[href*="/artworks/"]:not([data-xk-pixiv-id])').forEach((a) => {
+    // img のないリンク (テキストリンク等) は対象外
+    if (!a.querySelector('img')) return;
+
+    const href = a.getAttribute('href') || '';
+    const m = href.match(/\/artworks\/(\d+)/);
+    if (!m) return;
+
+    const artworkId = m[1];
+    a.dataset.xkPixivId = artworkId;
+
+    // ダウンロード済みURL形式: https://www.pixiv.net/artworks/{id}
+    const canonicalUrl = `https://www.pixiv.net/artworks/${artworkId}`;
+    if (!_downloadedUrls.has(canonicalUrl)) return;
+
+    // 既存バッジがあれば何もしない
+    if (a.querySelector('.xk-pixiv-badge')) return;
+
+    const badge = document.createElement('div');
+    badge.className = 'xk-pixiv-badge';
+    badge.title = 'x-keeper — ダウンロード済み';
+    badge.style.cssText = [
+      'position:absolute',
+      'top:4px',
+      'left:4px',
+      'z-index:10',
+      'width:22px',
+      'height:22px',
+      'border-radius:50%',
+      'background:#00ba7c',
+      'color:#fff',
+      'font-size:13px',
+      'font-weight:700',
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'box-shadow:0 1px 4px rgba(0,0,0,.6)',
+      'pointer-events:none',
+      'line-height:1',
+    ].join(';');
+    badge.textContent = '✓';
+
+    if (getComputedStyle(a).position === 'static') {
+      a.style.position = 'relative';
+    }
+    a.appendChild(badge);
+  });
+}
+
 // ── フローティングボタン ──────────────────────────────────────────────────────
 
 const FAB_ID = 'xkeeper-fab';
@@ -634,15 +696,22 @@ function onPixivNavigate() {
 function setupPixiv() {
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === 'NAVIGATE') setTimeout(onPixivNavigate, 80);
-    // Service Worker からの URL 更新通知: ボタン状態を再描画する
+    // Service Worker からの URL 更新通知: ボタン状態とサムネイルバッジを再描画する
     if (msg.type === 'URLS_UPDATED') {
       _downloadedUrls = new Set(msg.urls);
       for (const url of _downloadedUrls) _queuedUrls.delete(url);
       saveQueuedUrls();
       updateFloatingBtnState();
+      processPixivThumbnails();
     }
   });
   window.addEventListener('popstate', onPixivNavigate);
+
+  // Pixiv は SPA のため DOM 変化を監視してサムネイルバッジを随時付与する
+  new MutationObserver(() => {
+    processPixivThumbnails();
+  }).observe(document.body, { childList: true, subtree: true });
+
   onPixivNavigate();
 }
 
