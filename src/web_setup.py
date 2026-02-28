@@ -528,9 +528,13 @@ _GALLERY_INDEX_HTML = (
 <div id="select-rect"></div>
 
 <div class="container" style="max-width:1200px">
-  <div class="d-flex align-items-center gap-3 mb-3">
+  <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
     <h5 class="mb-0">ダウンロード済みメディア</h5>
     <span class="text-muted small">{{ dates|length }} 日分</span>
+    <div class="ms-auto btn-group btn-group-sm" role="group" aria-label="並び順">
+      <a href="/gallery?sort=new" class="btn {{ 'btn-primary' if sort == 'new' else 'btn-outline-secondary' }}">新 → 古</a>
+      <a href="/gallery?sort=old" class="btn {{ 'btn-primary' if sort == 'old' else 'btn-outline-secondary' }}">古 → 新</a>
+    </div>
   </div>
   <form method="get" action="/gallery/search" class="d-flex gap-2 mb-3">
     <input type="text" name="q" class="form-control form-control-sm"
@@ -922,7 +926,7 @@ _GALLERY_INDEX_HTML = (
     if (!body) return;
     const date = body.dataset.date;
     try {
-      const res = await fetch(`/gallery/thumbs/${date}`);
+      const res = await fetch(`/gallery/thumbs/${date}?sort={{ sort }}`);
       const html = await res.text();
       body.innerHTML = html;
       body.classList.remove('lazy-body');
@@ -1798,6 +1802,10 @@ def gallery():
     except ValueError:
         thumb_count = 50
 
+    # sort=new (デフォルト): 新→古 / sort=old: 古→新
+    sort = request.args.get("sort", "new")
+    sort_reverse = sort != "old"
+
     save_path = Path(_SAVE_PATH)
     if not save_path.exists():
         date_data = []
@@ -1805,7 +1813,7 @@ def gallery():
         date_dirs = sorted(
             [d for d in save_path.iterdir()
              if d.is_dir() and re.match(r"^\d{4}-\d{2}-\d{2}$", d.name)],
-            reverse=True,
+            reverse=sort_reverse,
         )
         date_data = []
         total_preloaded = 0
@@ -1813,7 +1821,7 @@ def gallery():
             files_sorted = sorted(
                 (f for f in d.iterdir() if f.is_file()),
                 key=lambda f: f.stat().st_mtime,
-                reverse=True,
+                reverse=sort_reverse,
             )
             count = len(files_sorted)
             if total_preloaded < thumb_count:
@@ -1825,7 +1833,7 @@ def gallery():
                 date_data.append({"name": d.name, "count": count, "files": file_data, "preloaded": True})
             else:
                 date_data.append({"name": d.name, "count": count, "files": [], "preloaded": False})
-    return render_template_string(_GALLERY_INDEX_HTML, dates=date_data)
+    return render_template_string(_GALLERY_INDEX_HTML, dates=date_data, sort=sort)
 
 
 @app.route("/gallery/<date_str>")
@@ -1851,9 +1859,10 @@ def gallery_thumbs(date_str: str):
     target = Path(_SAVE_PATH) / date_str
     if not target.exists() or not target.is_dir():
         return "", 404
+    sort_reverse = request.args.get("sort", "new") != "old"
     files = [
         {"name": f.name, "type": _media_type(f.name), "path": f"{date_str}/{f.name}"}
-        for f in sorted(target.iterdir(), key=lambda f: f.stat().st_mtime, reverse=True)
+        for f in sorted(target.iterdir(), key=lambda f: f.stat().st_mtime, reverse=sort_reverse)
         if f.is_file()
     ]
     return render_template_string(_THUMBS_FRAGMENT_HTML, files=files)
