@@ -97,8 +97,8 @@ def _extract_tweet_ids_from_import(data: dict | list) -> list[str]:
             if isinstance(item, str) and _TWEET_ID_RE.match(item):
                 ids.add(item)
     elif isinstance(data, dict):
-        # TMH 形式 / フラット辞書
-        records = data.get("records") or data.get("data") or []
+        # TMH 形式 / フラット辞書: v2 は "items"、v1 は "records"、独自形式は "data" キーを使う
+        records = data.get("records") or data.get("items") or data.get("data") or []
         for rec in records:
             if not isinstance(rec, dict):
                 continue
@@ -2074,6 +2074,21 @@ def api_history_count():
     if not _log_store:
         return jsonify({"error": "log store not available"}), 503
     return jsonify({"count": len(_log_store.get_downloaded_ids())})
+
+
+@app.route("/api/history/ids")
+def api_history_ids():
+    """ダウンロード済み tweet ID の全件リストを返す。
+
+    Chrome 拡張の Service Worker がポーリングでバッジ同期に使用する。
+    SSE の代わりにこのエンドポイントを使うことで HTTPS ページからの Mixed Content 問題を回避する。
+
+    Response:
+        ["id1", "id2", ...]
+    """
+    if not _log_store:
+        return jsonify([]), 503
+    return jsonify(sorted(_log_store.get_downloaded_ids()))
 
 
 @app.route("/api/history/export")

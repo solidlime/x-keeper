@@ -5,6 +5,9 @@
  *  - x-keeper サーバーへの HTTP リクエスト (コンテンツスクリプトから fetch できないためここで行う)
  *  - オフラインキューの管理 (chrome.storage.local)
  *  - SPA ナビゲーション検知 → コンテンツスクリプトへ通知
+ *  - ダウンロード済み ID のポーリング → 全タブへ IDS_UPDATED を通知
+ *    (content.js からの直接 SSE 接続は HTTPS ページからの Mixed Content でブロックされるため、
+ *     Service Worker が HTTP でポーリングして中継する)
  */
 
 'use strict';
@@ -71,6 +74,55 @@ async function checkHealth() {
   }
 }
 
+// ── ダウンロード済み ID ポーリング ────────────────────────────────────────────
+
+/** ポーリングで取得したダウンロード済み tweet ID のキャッシュ */
+let _cachedIds = [];
+
+/** 最後に確認したダウンロード件数 (変化検出用。-1 = 未取得) */
+let _cachedCount = -1;
+
+/**
+ * サーバーからダウンロード済み ID リストをポーリングして _cachedIds を更新する。
+ * カウントが変化していれば全タブのコンテンツスクリプトに IDS_UPDATED を通知する。
+ *
+ * content.js が直接 EventSource を使うと HTTPS ページからの HTTP SSE 接続が
+ * Mixed Content としてブロックされるため、Service Worker が中継する。
+ */
+async function pollDownloadedIds() {
+  try {
+    const base = await getServerUrl();
+
+    // まずカウントだけ確認して変化がなければ早期リターン (転送量節約)
+    const countRes = await fetchWithTimeout(`${base}/api/history/count`, {}, 3000);
+    if (countRes.status !== 200) return;
+    const { count } = await countRes.json();
+    if (count === _cachedCount) return;
+
+    // 変化あり: 全 ID を取得
+    const idsRes = await fetchWithTimeout(`${base}/api/history/ids`, {}, 10000);
+    if (idsRes.status !== 200) return;
+    _cachedIds  = await idsRes.json();
+    _cachedCount = count;
+
+    // 全 X / Pixiv タブに通知 (エラーは無視)
+    const tabs = await chrome.tabs.query({
+      url: ['*://x.com/*', '*://twitter.com/*', '*://www.pixiv.net/*'],
+    });
+    for (const tab of tabs) {
+      chrome.tabs.sendMessage(tab.id, { type: 'IDS_UPDATED', ids: _cachedIds }).catch(() => {});
+    }
+  } catch {
+    // サーバー未接続など: 静かにスキップ
+  }
+}
+
+// 1 分ごとにポーリング (Manifest V3 alarm: Service Worker が起きていなくても実行される)
+chrome.alarms.create('poll-ids', { periodInMinutes: 1 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'poll-ids') pollDownloadedIds();
+});
+
 // ── 結果ログ ──────────────────────────────────────────────────────────────────
 
 /** キュー送信の結果を chrome.storage.local に記録する (最新 MAX_RESULT_LOG 件) */
@@ -114,6 +166,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               accepted: data.accepted || [],
               rejected: data.rejected || [],
             });
+            // ダウンロードキューに追加できたので ID キャッシュを即時更新する
+            pollDownloadedIds();
             sendResponse({ ok: true, data });
           } catch (e) {
             for (const u of urls) await enqueueOffline(u);
@@ -156,6 +210,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           break;
         }
 
+        case 'GET_IDS': {
+          // キャッシュを即返却し、バックグラウンドでポーリングも実行して最新化する
+          sendResponse({ ok: true, ids: _cachedIds });
+          pollDownloadedIds();
+          break;
+        }
+
         case 'SET_SERVER_URL': {
           // URL に scheme がなければ補完する
           let url = (msg.url || '').trim().replace(/\/$/, '');
@@ -163,6 +224,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             url = `http://${url}`;
           }
           await chrome.storage.local.set({ [KEY_SERVER]: url });
+          // サーバー URL が変わったのでキャッシュをリセットして再取得する
+          _cachedCount = -1;
+          pollDownloadedIds();
           sendResponse({ ok: true, url });
           break;
         }
@@ -220,6 +284,7 @@ chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
     .catch(() => {});
 });
 
-// ── 起動時: オフラインキューのフラッシュ試行 ─────────────────────────────────
+// ── 起動時 ────────────────────────────────────────────────────────────────────
 
 flushQueue();
+pollDownloadedIds();

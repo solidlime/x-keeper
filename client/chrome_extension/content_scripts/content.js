@@ -16,17 +16,11 @@ const DEFAULT_SERVER = 'http://localhost:8989';
 
 // ── ローカル状態 ──────────────────────────────────────────────────────────────
 
-/** サーバーがダウンロード完了と報告した tweet ID のセット (SSE で同期) */
+/** サーバーがダウンロード完了と報告した tweet ID のセット (Service Worker ポーリング経由で同期) */
 let _downloadedIds = new Set();
 
 /** このクライアントがキューに追加済みの tweet ID のセット (storage.local で永続化) */
 let _queuedIds = new Set();
-
-/** 現在のSSE接続 */
-let _eventSource = null;
-
-/** SSE再接続タイマー */
-let _reconnectTimer = null;
 
 // ── ストレージユーティリティ ──────────────────────────────────────────────────
 
@@ -46,49 +40,26 @@ async function saveQueuedIds() {
   await chrome.storage.local.set({ [KEY_QUEUED]: [..._queuedIds] });
 }
 
-// ── SSE 同期 ──────────────────────────────────────────────────────────────────
+// ── ID 同期 (Service Worker 経由) ────────────────────────────────────────────
 
 /**
- * サーバーの SSE エンドポイントに接続してダウンロード済み ID を同期する。
- * - 接続時: 全IDリスト (snapshot イベント) を受信してローカルセットを初期化
- * - 以後: 新規追加分 (update イベント) を随時受信
- * - 切断時: 5秒後に自動再接続
+ * Service Worker に GET_IDS メッセージを送りダウンロード済み ID を初期化する。
+ *
+ * content.js から直接 EventSource を使うと、HTTPS ページ (x.com 等) から
+ * HTTP サーバーへの接続が Mixed Content としてブロックされる。
+ * Service Worker は HTTP/HTTPS 問わず fetch できるため、ポーリングを委譲する。
  */
-async function connectSSE() {
-  if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
-  if (_eventSource) { _eventSource.close(); _eventSource = null; }
-
-  const base = await getServerUrl();
-  const es = new EventSource(`${base}/api/history/stream`);
-  _eventSource = es;
-
-  es.addEventListener('snapshot', (e) => {
-    const ids = JSON.parse(e.data);
-    console.log(`[x-keeper] SSE snapshot 受信: ${ids.length} 件`);
-    _downloadedIds = new Set(ids);
-    // ダウンロード完了済みIDはキュー済みセットから削除する
-    for (const id of _downloadedIds) _queuedIds.delete(id);
-    updateAllTweetBadges();
+async function loadDownloadedIds() {
+  const res = await new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: 'GET_IDS' }, (r) => {
+      if (chrome.runtime.lastError) { resolve(null); return; }
+      resolve(r);
+    });
   });
-
-  es.addEventListener('update', (e) => {
-    const newIds = JSON.parse(e.data);
-    console.log(`[x-keeper] SSE update 受信: ${newIds.length} 件`);
-    for (const id of newIds) {
-      _downloadedIds.add(id);
-      _queuedIds.delete(id);  // ダウンロード完了 → キュー済みから昇格
-    }
-    updateBadgesForIds(new Set(newIds));
-    // キュー済みセットが変化したのでストレージも更新
-    saveQueuedIds();
-  });
-
-  es.onerror = () => {
-    console.warn(`[x-keeper] SSE 接続エラー (サーバー: ${base})。5 秒後に再接続します`);
-    es.close();
-    _eventSource = null;
-    _reconnectTimer = setTimeout(connectSSE, 5000);
-  };
+  if (!res || !res.ok) return;
+  _downloadedIds = new Set(res.ids);
+  for (const id of _downloadedIds) _queuedIds.delete(id);
+  updateAllTweetBadges();
 }
 
 // ── バッジ管理 ────────────────────────────────────────────────────────────────
@@ -403,9 +374,16 @@ function onXNavigate() {
 }
 
 function setupXTwitter() {
-  // サービスワーカーからの NAVIGATE メッセージを受信して UI を更新する
+  // サービスワーカーからのメッセージを受信して UI を更新する
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === 'NAVIGATE') onXNavigate();
+    // Service Worker からの ID 更新通知: バッジを再描画する
+    if (msg.type === 'IDS_UPDATED') {
+      _downloadedIds = new Set(msg.ids);
+      for (const id of _downloadedIds) _queuedIds.delete(id);
+      updateAllTweetBadges();
+      saveQueuedIds();
+    }
   });
 
   // popstate (ブラウザ戻る/進む)
@@ -445,8 +423,8 @@ function setupPixiv() {
   await loadQueuedIds();
 
   if (host === 'x.com' || host === 'twitter.com') {
-    // SSE 接続を開始してからページ構築
-    connectSSE();
+    // ダウンロード済み ID を Service Worker 経由で取得してからページ構築
+    loadDownloadedIds();
     setupXTwitter();
   } else if (host === 'www.pixiv.net') {
     setupPixiv();
