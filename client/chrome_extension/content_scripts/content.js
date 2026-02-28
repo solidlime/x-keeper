@@ -61,6 +61,32 @@ async function storageSet(items) {
   }
 }
 
+/**
+ * chrome.runtime.sendMessage のラッパー。
+ * Extension context が invalidated の場合は null を返す（例外を握り潰す）。
+ * chrome.runtime.sendMessage は context invalidated 時に同期的に throw するため、
+ * storageGet/Set 同様に保護が必要。
+ * @param {object} msg - Service Worker に送るメッセージ
+ * @returns {Promise<any>} レスポンス、またはエラー時は null
+ */
+function runtimeSendMessage(msg) {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage(msg, (res) => {
+        if (chrome.runtime.lastError) {
+          console.warn('[x-keeper] sendMessage 失敗:', chrome.runtime.lastError.message);
+          resolve(null);
+          return;
+        }
+        resolve(res);
+      });
+    } catch (e) {
+      console.warn('[x-keeper] sendMessage 例外 (context invalidated?):', e.message);
+      resolve(null);
+    }
+  });
+}
+
 /** キュー済みIDをストレージから読み込んでローカルセットを初期化する */
 async function loadQueuedIds() {
   const d = await storageGet(KEY_QUEUED);
@@ -94,16 +120,7 @@ async function saveQueuedUrls() {
  */
 async function loadDownloadedIds() {
   console.log('[x-keeper] ダウンロード済み ID を Service Worker に要求中...');
-  const res = await new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: 'GET_IDS' }, (r) => {
-      if (chrome.runtime.lastError) {
-        console.warn('[x-keeper] GET_IDS 失敗:', chrome.runtime.lastError.message);
-        resolve(null);
-        return;
-      }
-      resolve(r);
-    });
-  });
+  const res = await runtimeSendMessage({ type: 'GET_IDS' });
   if (!res || !res.ok) {
     console.warn('[x-keeper] GET_IDS レスポンス異常:', res);
     return;
@@ -118,12 +135,7 @@ async function loadDownloadedIds() {
  * Service Worker に GET_URLS メッセージを送り Pixiv / Imgur のダウンロード済み URL を初期化する。
  */
 async function loadDownloadedUrls() {
-  const res = await new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: 'GET_URLS' }, (r) => {
-      if (chrome.runtime.lastError) { resolve(null); return; }
-      resolve(r);
-    });
-  });
+  const res = await runtimeSendMessage({ type: 'GET_URLS' });
   if (!res || !res.ok) return;
   _downloadedUrls = new Set(res.urls);
   // 完了済み URL はキュー済みセットから除去する
@@ -385,8 +397,9 @@ function toast(msg, isError) {
 /**
  * URL をサービスワーカー経由でサーバーのダウンロードキューに追加する。
  * tweet_id が取得できた場合はキュー済み状態を即時反映する。
+ * runtimeSendMessage を使用して Extension context invalidated 時の Uncaught Error を防止する。
  */
-function queueUrl(url, btn, tweetId) {
+async function queueUrl(url, btn, tweetId) {
   if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }
 
   // キュー済み状態を即時反映（サーバー応答を待たない）
@@ -403,19 +416,18 @@ function queueUrl(url, btn, tweetId) {
     updateFloatingBtnState();
   }
 
-  chrome.runtime.sendMessage({ type: 'QUEUE_URL', url }, (res) => {
-    if (!res) {
-      toast('拡張機能を再読み込みしてください', true);
-      if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
-      return;
-    }
-    if (res.ok) {
-      toast('x-keeper にキューを追加しました ✓');
-    } else {
-      toast('サーバー未接続。次回接続時に送信します', true);
-    }
+  const res = await runtimeSendMessage({ type: 'QUEUE_URL', url });
+  if (!res) {
+    toast('拡張機能を再読み込みしてください', true);
     if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
-  });
+    return;
+  }
+  if (res.ok) {
+    toast('x-keeper にキューを追加しました ✓');
+  } else {
+    toast('サーバー未接続。次回接続時に送信します', true);
+  }
+  if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
 }
 
 // ── フローティングボタン ──────────────────────────────────────────────────────
