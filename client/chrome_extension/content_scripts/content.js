@@ -32,30 +32,55 @@ let _queuedUrls = new Set();
 // ── ストレージユーティリティ ──────────────────────────────────────────────────
 
 async function getServerUrl() {
-  const d = await chrome.storage.local.get(KEY_SERVER);
+  const d = await storageGet(KEY_SERVER);
   return (d[KEY_SERVER] || DEFAULT_SERVER).replace(/\/$/, '');
+}
+
+/**
+ * chrome.storage.local から値を読み取る。
+ * Extension context が invalidated の場合は空オブジェクトを返す。
+ */
+async function storageGet(keys) {
+  try {
+    return await chrome.storage.local.get(keys);
+  } catch (e) {
+    console.warn('[x-keeper] storage.get 失敗 (context invalidated?):', e.message);
+    return {};
+  }
+}
+
+/**
+ * chrome.storage.local に値を書き込む。
+ * Extension context が invalidated の場合は静かにスキップする。
+ */
+async function storageSet(items) {
+  try {
+    await chrome.storage.local.set(items);
+  } catch (e) {
+    console.warn('[x-keeper] storage.set 失敗 (context invalidated?):', e.message);
+  }
 }
 
 /** キュー済みIDをストレージから読み込んでローカルセットを初期化する */
 async function loadQueuedIds() {
-  const d = await chrome.storage.local.get(KEY_QUEUED);
+  const d = await storageGet(KEY_QUEUED);
   _queuedIds = new Set(d[KEY_QUEUED] || []);
 }
 
 /** キュー済みIDをストレージに保存する */
 async function saveQueuedIds() {
-  await chrome.storage.local.set({ [KEY_QUEUED]: [..._queuedIds] });
+  await storageSet({ [KEY_QUEUED]: [..._queuedIds] });
 }
 
 /** キュー済みURLをストレージから読み込んでローカルセットを初期化する (X 以外のサイト用) */
 async function loadQueuedUrls() {
-  const d = await chrome.storage.local.get(KEY_QUEUED_URLS);
+  const d = await storageGet(KEY_QUEUED_URLS);
   _queuedUrls = new Set(d[KEY_QUEUED_URLS] || []);
 }
 
 /** キュー済みURLをストレージに保存する */
 async function saveQueuedUrls() {
-  await chrome.storage.local.set({ [KEY_QUEUED_URLS]: [..._queuedUrls] });
+  await storageSet({ [KEY_QUEUED_URLS]: [..._queuedUrls] });
 }
 
 // ── ID / URL 同期 (Service Worker 経由) ──────────────────────────────────────
@@ -213,6 +238,8 @@ function updateMediaBadges(article, state) {
  * 画像リンク要素 (a[href*="/status/"]) を対象にする。
  */
 function applyGridBadge(linkEl, tweetId) {
+  // DOM から切り離されている要素は操作しない (Extension context invalidated 対策)
+  if (!linkEl || !document.contains(linkEl)) return;
   linkEl.querySelectorAll('.xk-grid-badge').forEach(el => el.remove());
 
   const state = _downloadedIds.has(tweetId) ? 'downloaded'
@@ -257,10 +284,14 @@ function applyGridBadge(linkEl, tweetId) {
 /**
  * メディア欄グリッドの各リンク要素を処理してバッジを付ける。
  * MutationObserver から定期的に呼ばれる。
+ * /username/media ページのみで呼ばれることを前提とする。
  */
 function processMediaGridItems() {
   // メディア欄では各メディアが <a href="/username/status/TWEETID"> で囲まれる
+  // article[data-testid="tweet"] の内部リンクは通常のタイムライン処理が担当するため除外する
   document.querySelectorAll('a[href*="/status/"]:not([data-xk-grid-id])').forEach((a) => {
+    // タイムラインの article 内リンクはタイムライン処理が担当するためスキップする
+    if (a.closest('article[data-testid="tweet"]')) return;
     // pbs.twimg.com 画像または動画を含む場合のみ処理する
     if (!a.querySelector('img[src*="pbs.twimg.com"]') &&
         !a.querySelector('video') &&
