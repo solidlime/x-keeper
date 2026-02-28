@@ -78,6 +78,55 @@ class ServerClient {
     return (data['count'] as num).toInt();
   }
 
+  /// サーバーの処理待ちキュー一覧を取得する。
+  ///
+  /// 各アイテムは {"url": "..."} 形式のマップ。失敗した場合は例外をスローする。
+  Future<List<Map<String, dynamic>>> fetchApiQueue() async {
+    final res = await http
+        .get(Uri.parse('$serverUrl/api/queue/status'))
+        .timeout(_timeout);
+    if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
+    final data = jsonDecode(res.body) as List;
+    return data.cast<Map<String, dynamic>>();
+  }
+
+  /// サーバーの処理待ちキューから指定 URL の 1 件を削除する。
+  Future<void> deleteApiQueueItem(String url) async {
+    final res = await http
+        .delete(
+          Uri.parse('$serverUrl/api/queue/item'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'url': url}),
+        )
+        .timeout(_timeout);
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw Exception('HTTP ${res.statusCode}: ${res.body}');
+    }
+  }
+
+  /// サーバーの処理待ちキューを全件削除する。
+  Future<void> clearApiQueue() async {
+    final res = await http
+        .post(Uri.parse('$serverUrl/api/queue/clear'))
+        .timeout(_timeout);
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw Exception('HTTP ${res.statusCode}: ${res.body}');
+    }
+  }
+
+  /// サーバーの最近の処理ログ (最新 5 件) を取得する。
+  ///
+  /// 各エントリは {"urls": [...], "status": "success"|"failure",
+  ///   "file_count": N, "error": "...", "ts": "ISO8601"} 形式。
+  Future<List<Map<String, dynamic>>> fetchRecentLogs() async {
+    final res = await http
+        .get(Uri.parse('$serverUrl/api/logs/recent'))
+        .timeout(_timeout);
+    if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
+    final data = jsonDecode(res.body) as List;
+    return data.cast<Map<String, dynamic>>();
+  }
+
   /// TwitterMediaHarvest 互換フォーマットの tweet ID をインポートする。
   ///
   /// 成功した場合はインポートされた件数を返す。失敗した場合は例外をスローする。

@@ -123,6 +123,10 @@ python -m src.main
 | `POST /retry/<message_id>/<channel_id>` | リトライキューへ追加 |
 | `GET /api/health` | サーバー疎通確認 (Chrome 拡張 / Android アプリ用) |
 | `POST /api/queue` | URL を直接ダウンロードキューに追加。`{"url": "..."}` または `{"urls": [...]}` |
+| `GET /api/queue/status` | 現在の処理待ちキュー一覧を返す (Chrome 拡張 / Android アプリ用) |
+| `DELETE /api/queue/item` | 処理待ちキューから指定 URL の 1 件を削除。`{"url": "..."}` |
+| `POST /api/queue/clear` | 処理待ちキューを全件削除 |
+| `GET /api/logs/recent` | 最近の処理ログ (最新 5 件) を返す |
 | `GET /api/history/export` | ダウンロード済み tweet ID を TMH 互換フォーマットで返す |
 | `POST /api/history/import` | TMH 互換フォーマットの tweet ID をインポートし重複防止リストに追加 |
 
@@ -169,6 +173,8 @@ python -m src.main
 - サーバー未接続時は `chrome.storage.local` にキューを保存し、次回接続時に一括送信
 - SPA ナビゲーション検知: `chrome.webNavigation.onHistoryStateUpdated` → `chrome.tabs.sendMessage` → コンテンツスクリプト
 - ダウンロード履歴は TMH (TwitterMediaHarvest) 互換フォーマットで export/import 可能
+- ポップアップのキュー済みアイテムは個別キャンセル（× ボタン）・全件クリアに対応
+- `IDS_UPDATED` / `URLS_UPDATED` 受信時にダウンロード完了済みアイテムを自動でリストから削除する
 
 ### Docker
 

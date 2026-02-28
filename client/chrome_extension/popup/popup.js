@@ -179,6 +179,116 @@ function renderResultLog(log) {
  * タイトル + クリッカブルリンクで一覧表示する。
  * 件数が 0 の場合はセクション非表示。
  */
+/**
+ * キュー済みアイテムの1件分の DOM を生成する。
+ * - タイトル (クリッカブルリンク)
+ * - URL (薄い文字で表示)
+ * - × ボタン (個別キャンセル: ローカルストレージ + サーバーキューから削除)
+ * @param {{url: string, title: string}} item
+ * @param {HTMLElement} container - アイテムを格納している親要素
+ */
+function createQueuedItemEl(item, container) {
+  const div = document.createElement('div');
+  div.style.cssText = [
+    'padding:5px 0',
+    'border-bottom:1px solid #1e293b',
+    'display:flex',
+    'flex-direction:column',
+    'gap:2px',
+  ].join(';');
+
+  // タイトル行 (リンク + × ボタン)
+  const titleRow = document.createElement('div');
+  titleRow.style.cssText = 'display:flex;align-items:center;gap:4px;';
+
+  const a = document.createElement('a');
+  a.href = item.url;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.title = item.url;
+  a.style.cssText = [
+    'flex:1',
+    'font-size:11px',
+    'color:#60a5fa',
+    'overflow:hidden',
+    'text-overflow:ellipsis',
+    'white-space:nowrap',
+    'text-decoration:none',
+    'min-width:0',
+  ].join(';');
+  a.textContent = item.title || item.url;
+  a.addEventListener('mouseenter', () => { a.style.textDecoration = 'underline'; });
+  a.addEventListener('mouseleave', () => { a.style.textDecoration = 'none'; });
+
+  // 個別キャンセルボタン
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = '×';
+  cancelBtn.title = 'キャンセル';
+  cancelBtn.style.cssText = [
+    'flex-shrink:0',
+    'padding:1px 5px',
+    'font-size:10px',
+    'border-radius:4px',
+    'background:#7f1d1d',
+    'color:#fca5a5',
+    'border:none',
+    'cursor:pointer',
+    'line-height:1.4',
+  ].join(';');
+  cancelBtn.addEventListener('click', async () => {
+    cancelBtn.disabled = true;
+
+    // 1. xkeeper_queued_items から削除
+    const d1 = await chrome.storage.local.get('xkeeper_queued_items');
+    const newItems = (d1.xkeeper_queued_items || []).filter(i => i.url !== item.url);
+    await chrome.storage.local.set({ xkeeper_queued_items: newItems });
+
+    // 2. xkeeper_queued_ids / xkeeper_queued_urls からも削除
+    const m = item.url.match(/\/status\/(\d+)/);
+    if (m) {
+      const d2 = await chrome.storage.local.get('xkeeper_queued_ids');
+      const ids = (d2.xkeeper_queued_ids || []).filter(id => id !== m[1]);
+      await chrome.storage.local.set({ xkeeper_queued_ids: ids });
+    } else {
+      const d2 = await chrome.storage.local.get('xkeeper_queued_urls');
+      const urls = (d2.xkeeper_queued_urls || []).filter(u => u !== item.url);
+      await chrome.storage.local.set({ xkeeper_queued_urls: urls });
+    }
+
+    // 3. サーバーの API キューからも削除を試みる (失敗してもローカルは削除済み)
+    send({ type: 'DELETE_API_QUEUE_ITEM', url: item.url }).catch(() => {});
+
+    // DOM から除去して件数を更新する
+    div.remove();
+    const remaining = container.querySelectorAll('[data-xk-queued-item]').length;
+    if (remaining === 0) {
+      $queuedItemsSection.style.display = 'none';
+    } else {
+      $queuedItemsCount.textContent = `(${remaining} 件)`;
+    }
+  });
+
+  titleRow.appendChild(a);
+  titleRow.appendChild(cancelBtn);
+
+  // URL 表示行
+  const urlSpan = document.createElement('span');
+  urlSpan.style.cssText = [
+    'font-size:10px',
+    'color:#475569',
+    'overflow:hidden',
+    'text-overflow:ellipsis',
+    'white-space:nowrap',
+    'font-family:monospace',
+  ].join(';');
+  urlSpan.textContent = item.url;
+
+  div.dataset.xkQueuedItem = '1';
+  div.appendChild(titleRow);
+  div.appendChild(urlSpan);
+  return div;
+}
+
 async function loadQueuedItems() {
   const data  = await chrome.storage.local.get('xkeeper_queued_items');
   const items = data.xkeeper_queued_items || [];
@@ -191,38 +301,9 @@ async function loadQueuedItems() {
   $queuedItemsSection.style.display = '';
   $queuedItemsCount.textContent = `(${items.length} 件)`;
 
-  // リストをクリアしてから再構築 (createElement で XSS 対策)
   $queuedItemsList.innerHTML = '';
   for (const item of items) {
-    const div = document.createElement('div');
-    div.style.cssText = [
-      'display:flex',
-      'align-items:center',
-      'gap:6px',
-      'padding:4px 0',
-      'border-bottom:1px solid #1e293b',
-    ].join(';');
-
-    const a = document.createElement('a');
-    a.href = item.url;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    a.title = item.url;
-    a.style.cssText = [
-      'flex:1',
-      'font-size:11px',
-      'color:#60a5fa',
-      'overflow:hidden',
-      'text-overflow:ellipsis',
-      'white-space:nowrap',
-      'text-decoration:none',
-    ].join(';');
-    a.textContent = item.title || item.url;
-    a.addEventListener('mouseenter', () => { a.style.textDecoration = 'underline'; });
-    a.addEventListener('mouseleave', () => { a.style.textDecoration = 'none'; });
-
-    div.appendChild(a);
-    $queuedItemsList.appendChild(div);
+    $queuedItemsList.appendChild(createQueuedItemEl(item, $queuedItemsList));
   }
 }
 

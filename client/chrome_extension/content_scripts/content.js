@@ -148,6 +148,25 @@ async function addQueuedItem(url, title) {
   }
 }
 
+/**
+ * ダウンロード完了済みのアイテムを xkeeper_queued_items から削除する。
+ * IDS_UPDATED / URLS_UPDATED 受信後に呼ぶ。
+ * - X ツイート URL (/status/{id}): _queuedIds にない id は完了済み
+ * - それ以外の URL: _queuedUrls にない URL は完了済み
+ */
+async function removeCompletedQueuedItems() {
+  const d = await storageGet(KEY_QUEUED_ITEMS);
+  const items = d[KEY_QUEUED_ITEMS] || [];
+  const filtered = items.filter(i => {
+    const m = i.url.match(/\/status\/(\d+)/);
+    if (m) return _queuedIds.has(m[1]);
+    return _queuedUrls.has(i.url);
+  });
+  if (filtered.length !== items.length) {
+    await storageSet({ [KEY_QUEUED_ITEMS]: filtered });
+  }
+}
+
 // ── ID / URL 同期 (Service Worker 経由) ──────────────────────────────────────
 
 /**
@@ -443,18 +462,8 @@ function toast(msg, isError) {
 async function queueUrl(url, btn, tweetId) {
   if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }
 
-  // ポップアップ表示用タイトルを生成する
-  let itemTitle = url;
-  if (tweetId) {
-    const mu = url.match(/(?:x|twitter)\.com\/([^/]+)\/status\//);
-    itemTitle = mu ? `@${mu[1]} のツイート` : url;
-  } else if (/\/artworks\/\d+/.test(url)) {
-    // Pixiv: ドキュメントタイトルから "- pixiv" サフィックスを除去
-    itemTitle = document.title.replace(/\s*[-|]\s*pixiv\s*$/i, '').trim() || url;
-  } else if (/\/media$/.test(url)) {
-    const mm = url.match(/(?:x|twitter)\.com\/([^/]+)\/media/);
-    itemTitle = mm ? `@${mm[1]} のメディア一覧` : url;
-  }
+  // ポップアップ表示用タイトル: ページタイトルをそのまま使う
+  const itemTitle = document.title || url;
 
   // キュー済み状態を即時反映（サーバー応答を待たない）
   if (tweetId) {
@@ -695,12 +704,13 @@ function setupXTwitter() {
   // サービスワーカーからのメッセージを受信して UI を更新する
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === 'NAVIGATE') onXNavigate();
-    // Service Worker からの ID 更新通知: バッジを再描画する
+    // Service Worker からの ID 更新通知: バッジを再描画しキュー済みアイテムを削除する
     if (msg.type === 'IDS_UPDATED') {
       _downloadedIds = new Set(msg.ids);
       for (const id of _downloadedIds) _queuedIds.delete(id);
       updateAllTweetBadges();
       saveQueuedIds();
+      removeCompletedQueuedItems();
     }
   });
 
@@ -750,13 +760,14 @@ function onPixivNavigate() {
 function setupPixiv() {
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === 'NAVIGATE') setTimeout(onPixivNavigate, 80);
-    // Service Worker からの URL 更新通知: ボタン状態とサムネイルバッジを再描画する
+    // Service Worker からの URL 更新通知: ボタン状態とサムネイルバッジを再描画しキュー済みアイテムを削除する
     if (msg.type === 'URLS_UPDATED') {
       _downloadedUrls = new Set(msg.urls);
       for (const url of _downloadedUrls) _queuedUrls.delete(url);
       saveQueuedUrls();
       updateFloatingBtnState();
       processPixivThumbnails();
+      removeCompletedQueuedItems();
     }
   });
   window.addEventListener('popstate', onPixivNavigate);

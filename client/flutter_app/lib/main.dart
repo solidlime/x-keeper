@@ -65,6 +65,8 @@ class _HomePageState extends State<HomePage> {
 
   bool _serverOnline = false;
   String _lastMessage = '';
+  List<Map<String, dynamic>> _apiQueue = [];
+  List<Map<String, dynamic>> _recentLogs = [];
 
   @override
   void initState() {
@@ -148,7 +150,29 @@ class _HomePageState extends State<HomePage> {
   Future<void> _checkAndFlush() async {
     final online = await _client.health();
     setState(() => _serverOnline = online);
-    if (online) await _flushQueue();
+    if (online) {
+      await _flushQueue();
+      // オンライン時のみサーバー状態を取得する
+      await Future.wait([_fetchApiQueue(), _fetchRecentLogs()]);
+    }
+  }
+
+  Future<void> _fetchApiQueue() async {
+    try {
+      final queue = await _client.fetchApiQueue();
+      if (mounted) setState(() => _apiQueue = queue);
+    } catch (_) {
+      // サーバー未接続などは無視
+    }
+  }
+
+  Future<void> _fetchRecentLogs() async {
+    try {
+      final logs = await _client.fetchRecentLogs();
+      if (mounted) setState(() => _recentLogs = logs);
+    } catch (_) {
+      // サーバー未接続などは無視
+    }
   }
 
   void _setMessage(String msg) => setState(() => _lastMessage = msg);
@@ -210,6 +234,22 @@ class _HomePageState extends State<HomePage> {
                   setState(() {});
                 },
               ),
+              const SizedBox(height: 16),
+            ],
+
+            // サーバー処理待ちキュー (オンライン時のみ)
+            if (_serverOnline && _apiQueue.isNotEmpty) ...[
+              _ApiQueueCard(
+                queue: _apiQueue,
+                client: _client,
+                onChanged: _fetchApiQueue,
+              ),
+              const SizedBox(height: 16),
+            ],
+
+            // 最近の処理ログ (オンライン時のみ)
+            if (_serverOnline && _recentLogs.isNotEmpty) ...[
+              _RecentLogsCard(logs: _recentLogs),
               const SizedBox(height: 16),
             ],
 
@@ -451,6 +491,188 @@ class _HelpCard extends StatelessWidget {
             Text('3. サーバーが自動的にダウンロードする', style: TextStyle(fontSize: 13)),
             SizedBox(height: 6),
             Text('※ 未接続時はキューに保存し、\n   次回接続時に自動送信します', style: TextStyle(fontSize: 12, color: Colors.grey)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// サーバー処理待ちキューカード
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// サーバーの直接ダウンロードキュー (/api/queue/status) を一覧表示するカード。
+/// 各アイテムを個別削除でき、全件削除ボタンも持つ。
+class _ApiQueueCard extends StatefulWidget {
+  const _ApiQueueCard({
+    required this.queue,
+    required this.client,
+    required this.onChanged,
+  });
+
+  final List<Map<String, dynamic>> queue;
+  final ServerClient client;
+
+  /// 削除後に親ウィジェットがリストを再取得するためのコールバック
+  final Future<void> Function() onChanged;
+
+  @override
+  State<_ApiQueueCard> createState() => _ApiQueueCardState();
+}
+
+class _ApiQueueCardState extends State<_ApiQueueCard> {
+  bool _clearing = false;
+
+  Future<void> _deleteItem(String url) async {
+    try {
+      await widget.client.deleteApiQueueItem(url);
+      await widget.onChanged();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('削除失敗: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _clearAll() async {
+    setState(() => _clearing = true);
+    try {
+      await widget.client.clearApiQueue();
+      await widget.onChanged();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('全件削除失敗: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _clearing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '処理待ちキュー (${widget.queue.length} 件)',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            ...widget.queue.map((item) {
+              final url = item['url'] as String? ?? '';
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        url,
+                        style: const TextStyle(fontSize: 11),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 16),
+                      tooltip: '削除',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                      onPressed: () => _deleteItem(url),
+                    ),
+                  ],
+                ),
+              );
+            }),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _clearing ? null : _clearAll,
+                icon: _clearing
+                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.delete_sweep_outlined, size: 16),
+                label: const Text('全件削除'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 最近の処理ログカード
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// サーバーの最近の処理ログ (/api/logs/recent) を一覧表示するカード。
+class _RecentLogsCard extends StatelessWidget {
+  const _RecentLogsCard({required this.logs});
+
+  final List<Map<String, dynamic>> logs;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('最近の処理', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            ...logs.map((entry) {
+              final urls  = (entry['urls'] as List?)?.cast<String>() ?? [];
+              final url   = urls.isNotEmpty ? urls.first : '';
+              final ok    = entry['status'] == 'success';
+              final count = entry['file_count'] as int?;
+              final error = entry['error'] as String?;
+              final ts    = entry['ts'] as String? ?? '';
+
+              final detail = ok
+                  ? (count != null ? ' $count 件' : '')
+                  : (error != null ? ' — $error' : '');
+
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      ok ? Icons.check_circle_outline : Icons.error_outline,
+                      color: ok ? Colors.green : Colors.red,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            url,
+                            style: const TextStyle(fontSize: 11),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            '${ok ? "成功" : "失敗"}$detail  ${ts.length >= 16 ? ts.substring(0, 16).replaceFirst('T', ' ') : ts}',
+                            style: TextStyle(fontSize: 10, color: Colors.grey[500]),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
           ],
         ),
       ),
