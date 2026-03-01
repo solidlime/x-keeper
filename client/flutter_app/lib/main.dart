@@ -10,6 +10,7 @@ import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -59,8 +60,10 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
-  late final ServerClient _client;
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
+  static const _toastChannel = MethodChannel('com.solidlime.xkeeper_client/toast');
+
+  late ServerClient _client;
   late StreamSubscription _intentSub;
 
   bool _serverOnline = false;
@@ -71,6 +74,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _client = ServerClient(widget.store.serverUrl);
 
     // アプリ起動後: 疎通確認 + オフラインキューのフラッシュ
@@ -88,8 +92,17 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _intentSub.cancel();
     super.dispose();
+  }
+
+  // フォアグラウンド復帰時に接続状態・ログを更新する
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkAndFlush();
+    }
   }
 
   // ── 共有インテント処理 ───────────────────────────────────────────────────
@@ -106,10 +119,14 @@ class _HomePageState extends State<HomePage> {
 
     if (urls.isEmpty) {
       _setMessage('対応していない URL です');
+      await SystemNavigator.pop();
       return;
     }
 
     await _sendUrls(urls);
+    // Toast を表示してから即座に共有元に戻る
+    await _toastChannel.invokeMethod('show', {'message': _lastMessage});
+    await SystemNavigator.pop();
   }
 
   // ── URL 送信 ─────────────────────────────────────────────────────────────

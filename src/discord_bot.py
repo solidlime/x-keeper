@@ -219,13 +219,13 @@ class XKeeperBot(discord.Client):
     async def _retry_queue_task(self) -> None:
         """リトライキューのポーリングと定期スキャンを行う。"""
         await self.wait_until_ready()
-        last_scan = asyncio.get_event_loop().time()
+        last_scan = asyncio.get_running_loop().time()
         while not self.is_closed():
             await asyncio.sleep(self._retry_poll_interval)
 
             # 定期スキャン (scan_interval > 0 の場合)
             if self._scan_interval > 0:
-                now = asyncio.get_event_loop().time()
+                now = asyncio.get_running_loop().time()
                 if now - last_scan >= self._scan_interval:
                     last_scan = now
                     logger.info("定期スキャンを開始します (間隔: %d 秒)", self._scan_interval)

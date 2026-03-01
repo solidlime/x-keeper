@@ -129,6 +129,11 @@ python -m src.main
 | `GET /api/logs/recent` | 最近の処理ログ (最新 5 件) を返す |
 | `GET /api/history/export` | ダウンロード済み tweet ID を TMH 互換フォーマットで返す |
 | `POST /api/history/import` | TMH 互換フォーマットの tweet ID をインポートし重複防止リストに追加 |
+| `GET /api/history/count` | ダウンロード済み tweet ID の総件数を返す `{"count": N}` |
+| `GET /api/history/ids` | ダウンロード済み tweet ID の全リストを返す (Chrome 拡張バッジ用) |
+| `GET /api/history/urls/count` | ダウンロード済み URL (Pixiv/Imgur 等) の総件数を返す `{"count": N}` |
+| `GET /api/history/urls` | ダウンロード済み URL の全リストを返す (Chrome 拡張バッジ用) |
+| `GET /queue` | API キューの管理ページ (処理待ちキュー一覧・全件削除) |
 
 **ギャラリー** (`/gallery`):
 - `GALLERY_THUMB_COUNT` (デフォルト50) 件に達するまでの日付を先読み表示 (サーバーサイドレンダリング)
@@ -193,3 +198,21 @@ GitHub Actions (`docker-build.yml`) が `ghcr.io/solidlime/x-keeper:latest` に�
 
 - **gallery-dl**: Twitter API キー不要だが X の仕様変更で壊れる可能性がある。
   - `--dump-json` 出力フォーマットが変わった場合は `_parse_tweet_info` を確認すること
+
+### コーディング注意点
+
+**`_download_one` の戻り値**:
+- 必ず `files, rc_ok = self._download_one(...)` でアンパックすること
+- `new_files = self._download_one(...)` のままだとタプルをイテレートしてしまう
+
+**`log_store.py` のローカル変数名**:
+- メソッド内で `queue` という名前のローカル変数を使わない (`import queue` モジュールとシャドーイングするため)
+- 代替: `items`, `entries` を使う
+
+**asyncio と subprocess**:
+- 全ダウンロード処理 (`get_thread` / `download_all` / `download_direct` / `download_user_media`) は
+  `await loop.run_in_executor(None, ...)` でスレッド実行すること (asyncio イベントループをブロックしないため)
+
+**大きな変更・リファクタのワークフロー**:
+- Team + サブエージェントを活用する: `herta-coder`(コード修正) + `herta-docs`(ドキュメント) を並列実行
+- コード修正は `herta-coder`、README等のドキュメント更新は `herta-docs` に委譲する

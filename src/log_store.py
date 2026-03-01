@@ -130,21 +130,21 @@ class LogStore:
 
     def queue_retry(self, message_id: int, channel_id: int) -> None:
         with self._lock:
-            queue = self._read(self._retry_file)
+            items = self._read(self._retry_file)
             if not any(
                 e["message_id"] == message_id and e["channel_id"] == channel_id
-                for e in queue
+                for e in items
             ):
-                queue.append({"message_id": message_id, "channel_id": channel_id})
-                self._write(self._retry_file, queue)
+                items.append({"message_id": message_id, "channel_id": channel_id})
+                self._write(self._retry_file, items)
 
     def pop_retry_queue(self) -> list[dict]:
         """キュー全件を取り出してクリアする。"""
         with self._lock:
-            queue = self._read(self._retry_file)
-            if queue:
+            items = self._read(self._retry_file)
+            if items:
                 self._write(self._retry_file, [])
-        return queue
+        return items
 
     # ── ダウンロード済み tweet ID 管理 ─────────────────────────────────────
 
@@ -263,13 +263,13 @@ class LogStore:
     def queue_url_download(self, url: str) -> None:
         """URL を直接ダウンロードキューに追加する。重複 URL は追加しない。"""
         with self._lock:
-            queue = self._read(self._api_queue_file)
-            if not any(e["url"] == url for e in queue):
-                queue.append({
+            items = self._read(self._api_queue_file)
+            if not any(e["url"] == url for e in items):
+                items.append({
                     "url": url,
                     "queued_at": datetime.now().isoformat(timespec="seconds"),
                 })
-                self._write(self._api_queue_file, queue)
+                self._write(self._api_queue_file, items)
 
     def peek_api_queue(self) -> list[dict]:
         """直接ダウンロードキューの内容をクリアせずに返す。"""
@@ -279,18 +279,18 @@ class LogStore:
     def remove_api_url(self, url: str) -> bool:
         """指定 URL を直接ダウンロードキューから削除する。削除できた場合は True を返す。"""
         with self._lock:
-            queue = self._read(self._api_queue_file)
-            new_queue = [e for e in queue if e["url"] != url]
-            if len(new_queue) == len(queue):
+            items = self._read(self._api_queue_file)
+            new_items = [e for e in items if e["url"] != url]
+            if len(new_items) == len(items):
                 return False
-            self._write(self._api_queue_file, new_queue)
+            self._write(self._api_queue_file, new_items)
         return True
 
     def clear_api_queue(self) -> int:
         """直接ダウンロードキューを全件削除する。削除件数を返す。"""
         with self._lock:
-            queue = self._read(self._api_queue_file)
-            count = len(queue)
+            items = self._read(self._api_queue_file)
+            count = len(items)
             if count:
                 self._write(self._api_queue_file, [])
         return count
@@ -298,7 +298,7 @@ class LogStore:
     def pop_api_queue(self) -> list[str]:
         """直接ダウンロードキューの全 URL を取り出してクリアする。"""
         with self._lock:
-            queue = self._read(self._api_queue_file)
-            if queue:
+            items = self._read(self._api_queue_file)
+            if items:
                 self._write(self._api_queue_file, [])
-        return [e["url"] for e in queue]
+        return [e["url"] for e in items]

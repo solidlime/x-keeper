@@ -153,7 +153,7 @@ class MediaDownloader:
 
         saved: list[SavedFile] = []
         for url in urls:
-            new_files = self._download_one(url, dest_dir, filename_template=None)
+            new_files, _ = self._download_one(url, dest_dir, filename_template=None)
             for path in new_files:
                 saved.append(
                     SavedFile(
