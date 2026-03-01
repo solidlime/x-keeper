@@ -41,3 +41,7 @@ class DownloadResult:
 
     skipped_count: int
     """重複のためスキップされたツイート URL 数 (既ダウンロード済み)。"""
+
+    existed_count: int = 0
+    """gallery-dl が成功 (rc=0) したがファイルが既存だった URL 数。
+    ダウンロード済みとしてマーク済みなので次回以降は skipped_count に計上される。"""

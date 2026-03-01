@@ -104,8 +104,9 @@ class MediaDownloader:
         skipped_count = len(tweet_urls) - len(pending)
 
         saved: list[SavedFile] = []
+        existed_count = 0
         for url in pending:
-            new_files = self._download_one(url, dest_dir, _TWITTER_FILENAME_TEMPLATE)
+            new_files, rc_ok = self._download_one(url, dest_dir, _TWITTER_FILENAME_TEMPLATE)
             tid = _tweet_id_from_url(url)
             for path in new_files:
                 saved.append(
@@ -115,16 +116,25 @@ class MediaDownloader:
                         date_folder=today,
                     )
                 )
-            if new_files and tid and self._log_store:
-                self._log_store.mark_downloaded([tid])
+            if tid and self._log_store:
+                if new_files:
+                    self._log_store.mark_downloaded([tid])
+                elif rc_ok:
+                    # gallery-dl 成功だがファイルが既存 → 次回スキップされるよう mark する
+                    self._log_store.mark_downloaded([tid])
+                    existed_count += 1
+                    logger.info(
+                        "既存ファイルのためスキップ (mark_downloaded): tweet_id=%s", tid
+                    )
 
         logger.info(
-            "ダウンロード完了: 対象=%d, 重複スキップ=%d, 保存ファイル数=%d",
+            "ダウンロード完了: 対象=%d, 重複スキップ=%d, 既存=%d, 保存ファイル数=%d",
             len(tweet_urls),
             skipped_count,
+            existed_count,
             len(saved),
         )
-        return DownloadResult(saved=saved, skipped_count=skipped_count)
+        return DownloadResult(saved=saved, skipped_count=skipped_count, existed_count=existed_count)
 
     def download_direct(self, urls: list[str]) -> list[SavedFile]:
         """Pixiv など Twitter 以外の URL を直接ダウンロードする。
@@ -203,7 +213,9 @@ class MediaDownloader:
 
     # ── private ─────────────────────────────────────────────────────────────────────
 
-    def _download_one(self, url: str, dest_dir: Path, filename_template: str | None) -> list[Path]:
+    def _download_one(
+        self, url: str, dest_dir: Path, filename_template: str | None
+    ) -> tuple[list[Path], bool]:
         """単一ツイートの全メディアを gallery-dl でダウンロードする。
 
         ディレクトリ差分により新規保存ファイルを特定する。
@@ -211,9 +223,12 @@ class MediaDownloader:
         Args:
             url: ダウンロード対象のツイート URL。
             dest_dir: 保存先ディレクトリ。
+            filename_template: gallery-dl のファイル名テンプレート。
 
         Returns:
-            新規保存されたファイルの Path リスト。
+            (新規保存ファイルの Path リスト, gallery-dl が正常終了したか)。
+            正常終了 = returncode 0 (ダウンロード済) または 1 (対象ファイルなし)。
+            ファイルが既存のために new_files が空でも rc_ok=True の場合がある。
         """
         files_before: set[Path] = set(dest_dir.iterdir())
 
@@ -274,8 +289,11 @@ class MediaDownloader:
 
         files_after: set[Path] = set(dest_dir.iterdir())
         new_files = sorted(files_after - files_before)
-        logger.info("新規保存ファイル数=%d: url=%s", len(new_files), url)
-        return new_files
+        rc_ok = last_returncode in (0, 1)
+        logger.info(
+            "新規保存ファイル数=%d rc_ok=%s: url=%s", len(new_files), rc_ok, url
+        )
+        return new_files, rc_ok
 
     def _download_media_page(
         self,

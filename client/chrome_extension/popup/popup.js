@@ -289,9 +289,30 @@ function createQueuedItemEl(item, container) {
   return div;
 }
 
-async function loadQueuedItems() {
+/**
+ * chrome.storage.local のキュー済みアイテムを描画する。
+ *
+ * serverApiQueue (GET_STATUS の apiQueue) と offlineQueue (GET_STATUS の queue) が
+ * 渡された場合、いずれにも存在しないアイテムは処理済みとみなしてストレージから削除する。
+ * サーバーオフライン時 (serverApiQueue === null) は照合をスキップする。
+ *
+ * @param {Array|null} serverApiQueue - サーバーの処理待ちキュー。未接続時は null。
+ * @param {Array}      offlineQueue   - chrome.storage のオフラインキュー (URL 配列)。
+ */
+async function loadQueuedItems(serverApiQueue = null, offlineQueue = []) {
   const data  = await chrome.storage.local.get('xkeeper_queued_items');
-  const items = data.xkeeper_queued_items || [];
+  let   items = data.xkeeper_queued_items || [];
+
+  // オンライン時: サーバーキュー + オフラインキューと照合し処理済みを自動削除
+  if (items.length > 0 && serverApiQueue !== null) {
+    const serverUrls  = new Set(serverApiQueue.map(i => i.url));
+    const offlineUrls = new Set(offlineQueue || []);
+    const pending = items.filter(i => serverUrls.has(i.url) || offlineUrls.has(i.url));
+    if (pending.length < items.length) {
+      items = pending;
+      await chrome.storage.local.set({ xkeeper_queued_items: items });
+    }
+  }
 
   if (items.length === 0) {
     $queuedItemsSection.style.display = 'none';
@@ -330,10 +351,14 @@ function applyStatus(res) {
   renderHistoryCount(res.historyCount ?? null);
   renderServerLog(res.serverLogs || []);
   renderResultLog(res.resultLog || []);
+  // サーバーキュー・オフラインキューと照合してキュー済みアイテムを更新する
+  loadQueuedItems(
+    res.online ? (res.apiQueue || []) : null,
+    res.queue || [],
+  );
 }
 
 init();
-loadQueuedItems();
 
 // ── サーバー URL 設定 ─────────────────────────────────────────────────────────
 

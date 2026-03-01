@@ -159,13 +159,15 @@ class XKeeperBot(discord.Client):
                     result = await loop.run_in_executor(
                         None, self.downloader.download_all, thread.tweet_urls
                     )
-                    if result.skipped_count == len(thread.tweet_urls):
-                        # スレッド内の全ツイートが既ダウンロード済み → 重複のため中断
+                    all_processed = result.skipped_count + result.existed_count
+                    if all_processed == len(thread.tweet_urls):
+                        # スレッド内の全ツイートが既ダウンロード済み (重複 or 既存) → ⏭️
                         logger.info(
-                            "重複のため中断: message_id=%d, url=%s, skipped=%d 件",
+                            "重複のため中断: message_id=%d, url=%s, skipped=%d 既存=%d 件",
                             message.id,
                             url,
                             result.skipped_count,
+                            result.existed_count,
                         )
                         all_duplicate_skipped_urls += 1
                     elif not result.saved:

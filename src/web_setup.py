@@ -167,7 +167,7 @@ _BASE_STYLE = """
       <a class="nav-link" href="/?setup=1">セットアップ</a>
       <a class="nav-link" href="/gallery">ギャラリー</a>
       <a class="nav-link" href="/logs">ログ</a>
-      <a class="nav-link" href="/failures">失敗</a>
+      <a class="nav-link" href="/queue">キュー</a>
     </div>
   </div>
 </nav>
@@ -1540,6 +1540,136 @@ _LOGS_HTML = (
 """
 )
 
+_QUEUE_HTML = (
+    _BASE_STYLE
+    + """
+<div class="container" style="max-width:960px">
+
+  {# ── 処理待ちキュー ─────────────────────────────────────────── #}
+  <div class="d-flex align-items-center gap-3 mb-2">
+    <h5 class="mb-0">処理待ちキュー</h5>
+    <span class="text-muted small">{{ queue_items|length }} 件</span>
+    {% if queue_items %}
+    <button id="btn-clear-all" class="btn btn-sm btn-outline-danger ms-auto">全件クリア</button>
+    {% endif %}
+  </div>
+
+  {% if not queue_items %}
+  <p class="text-muted mb-4">処理待ちキューは空です。</p>
+  {% else %}
+  <div class="table-responsive mb-4">
+    <table class="table table-sm align-middle" id="queue-table">
+      <thead class="table-light">
+        <tr>
+          <th class="text-nowrap">追加時刻</th>
+          <th>URL</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in queue_items %}
+        <tr data-url="{{ item.url }}">
+          <td class="text-nowrap small font-monospace">{{ item.queued_at }}</td>
+          <td class="small">
+            <a href="{{ item.url }}" target="_blank" rel="noopener"
+               class="text-decoration-none text-truncate d-block" style="max-width:380px">{{ item.url }}</a>
+          </td>
+          <td class="text-end">
+            <button class="btn btn-sm btn-outline-danger btn-del-item" data-url="{{ item.url }}">削除</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {# ── 失敗リスト ─────────────────────────────────────────────── #}
+  <div class="d-flex align-items-center gap-3 mb-2">
+    <h5 class="mb-0">失敗リスト</h5>
+    <span class="text-muted small">{{ failure_entries|length }} 件</span>
+  </div>
+  {% if queued %}
+  <div class="alert alert-success py-2 small">
+    リトライをキューに追加しました。Bot が数秒以内に処理します。
+  </div>
+  {% endif %}
+  {% if not failure_entries %}
+  <p class="text-muted">失敗した処理はありません。</p>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead class="table-light">
+        <tr>
+          <th class="text-nowrap">時刻</th>
+          <th>URL</th>
+          <th>エラー</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in failure_entries %}
+        <tr>
+          <td class="text-nowrap small font-monospace">{{ e.ts }}</td>
+          <td class="small">
+            {% for url in e.urls %}
+            <div class="text-truncate" style="max-width:260px">
+              <a href="{{ url }}" target="_blank" rel="noopener" class="text-decoration-none">{{ url }}</a>
+            </div>
+            {% endfor %}
+          </td>
+          <td class="small text-danger">
+            <span title="{{ e.error }}">{{ e.error[:80] }}{% if e.error|length > 80 %}…{% endif %}</span>
+          </td>
+          <td>
+            <form method="post" action="/retry/{{ e.message_id }}/{{ e.channel_id }}">
+              <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">リトライ</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+// ── 処理待ちキュー操作 ────────────────────────────────────────────────
+document.querySelectorAll('.btn-del-item').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const url = btn.dataset.url;
+    btn.disabled = true;
+    const res = await fetch('/api/queue/item', {
+      method: 'DELETE',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url}),
+    });
+    if (res.ok) {
+      btn.closest('tr').remove();
+      const tbody = document.querySelector('#queue-table tbody');
+      if (tbody && !tbody.querySelector('tr')) location.reload();
+    } else {
+      btn.disabled = false;
+      alert('削除失敗');
+    }
+  });
+});
+
+const btnClearAll = document.getElementById('btn-clear-all');
+if (btnClearAll) {
+  btnClearAll.addEventListener('click', async () => {
+    if (!confirm('処理待ちキューを全件削除しますか？')) return;
+    btnClearAll.disabled = true;
+    await fetch('/api/queue/clear', {method: 'POST'});
+    location.reload();
+  });
+}
+</script>
+</body></html>
+"""
+)
+
 _FAILURES_HTML = (
     _BASE_STYLE
     + """
@@ -1984,21 +2114,28 @@ def logs():
     return render_template_string(_LOGS_HTML, entries=entries)
 
 
-@app.route("/failures")
-def failures():
-    entries = _log_store.get_failures() if _log_store else []
+@app.route("/queue")
+def queue_page():
+    queue_items = _log_store.peek_api_queue() if _log_store else []
+    failure_entries = _log_store.get_failures() if _log_store else []
     return render_template_string(
-        _FAILURES_HTML,
-        entries=entries,
+        _QUEUE_HTML,
+        queue_items=queue_items,
+        failure_entries=failure_entries,
         queued=request.args.get("queued") == "1",
     )
+
+
+@app.route("/failures")
+def failures():
+    return redirect("/queue")
 
 
 @app.route("/retry/<int:message_id>/<int:channel_id>", methods=["POST"])
 def retry(message_id: int, channel_id: int):
     if _log_store:
         _log_store.queue_retry(message_id, channel_id)
-    return redirect("/failures?queued=1")
+    return redirect("/queue?queued=1")
 
 
 # ── REST API (Tampermonkey / Android アプリ向け) ──────────────────────────────
