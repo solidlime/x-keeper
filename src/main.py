@@ -1,24 +1,37 @@
 """
 エントリーポイント。
-Discord Bot で X (Twitter) / Pixiv のメディアを自動ダウンロードするメインループ。
+X (Twitter) / Pixiv / Imgur メディアを API キュー経由でダウンロードするメインループ。
+Discord 非依存: Chrome 拡張・Android アプリから直接 URL を投入する。
 """
 
 import asyncio
 import logging
+import re
 import sys
 import threading
 
 from .config import Settings
-from .discord_bot import XKeeperBot
 from .image_downloader import MediaDownloader
 from .log_store import LogStore
 from .twitter_client import TwitterClient
 from . import web_setup as _web_setup_module
 from .web_setup import app as _setup_app
 
+logger = logging.getLogger(__name__)
+
+# URL パターン
+_X_MEDIA_PAGE_PATTERN = re.compile(
+    r"https?://(?:twitter\.com|x\.com)/[A-Za-z0-9_]+/media\b"
+)
+_PIXIV_URL_PATTERN = re.compile(
+    r"https?://(?:www\.)?pixiv\.net/(?:en/)?artworks/\d+"
+)
+_IMGUR_URL_PATTERN = re.compile(
+    r"https?://(?:i\.)?imgur\.com/[A-Za-z0-9/_\-.]+"
+)
+
 
 def _reconfigure_stdout_encoding() -> None:
-    """stdout / stderr の文字コードを UTF-8 に強制する。"""
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if hasattr(sys.stderr, "reconfigure"):
@@ -37,45 +50,65 @@ def _setup_logging(level: str) -> None:
     )
 
 
-_CHECK_INTERVAL = 30
+async def _download_url_direct(
+    url: str,
+    downloader: MediaDownloader,
+    twitter: TwitterClient,
+    log_store: LogStore,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """URL を直接ダウンロードしてログに記録する。"""
+    logger.info("直接ダウンロード開始: url=%s", url)
+    try:
+        if _X_MEDIA_PAGE_PATTERN.search(url):
+            saved = await loop.run_in_executor(
+                None, downloader.download_user_media, url
+            )
+            logger.info("直接ダウンロード完了: url=%s, files=%d", url, len(saved))
+            log_store.append_success([url], len(saved))
+        elif _PIXIV_URL_PATTERN.search(url) or _IMGUR_URL_PATTERN.search(url):
+            saved = await loop.run_in_executor(
+                None, downloader.download_direct, [url]
+            )
+            logger.info("直接ダウンロード完了: url=%s, files=%d", url, len(saved))
+            log_store.append_success([url], len(saved))
+            log_store.mark_downloaded_url(url)
+        else:
+            thread = await loop.run_in_executor(
+                None, twitter.get_thread, url
+            )
+            if not thread.tweet_urls:
+                logger.info("メディアが見つかりませんでした: url=%s", url)
+                return
+            result = await loop.run_in_executor(
+                None, downloader.download_all, thread.tweet_urls
+            )
+            logger.info(
+                "直接ダウンロード完了: url=%s, files=%d, skipped=%d",
+                url, len(result.saved), result.skipped_count,
+            )
+            log_store.append_success([url], len(result.saved))
+    except Exception as exc:
+        logger.error("直接ダウンロードエラー: url=%s, error=%s", url, exc)
+        log_store.append_failure([url], str(exc))
 
 
-def _missing_settings(settings: Settings) -> list[str]:
-    missing = []
-    if not settings.discord_bot_token:
-        missing.append("DISCORD_BOT_TOKEN")
-    if not settings.channel_ids:
-        missing.append("DISCORD_CHANNEL_ID")
-    return missing
-
-
-async def _wait_for_required_settings(
-    settings: Settings, logger: logging.Logger
-) -> Settings:
-    missing = _missing_settings(settings)
-    if not missing:
-        return settings
-
-    logger.error(
-        "必須の設定が未設定です: %s\n"
-        "  → ブラウザで http://localhost:%d を開いてセットアップしてください。\n"
-        "  → 設定が完了すると自動的に起動します (%d 秒ごとに再確認)。",
-        ", ".join(missing),
-        settings.web_setup_port,
-        _CHECK_INTERVAL,
-    )
+async def _api_queue_loop(
+    downloader: MediaDownloader,
+    twitter: TwitterClient,
+    log_store: LogStore,
+    poll_interval: int,
+) -> None:
+    """API キューを定期的にポーリングしてダウンロードを実行する。"""
+    loop = asyncio.get_running_loop()
+    logger.info("API キューループ開始 (ポーリング間隔: %d 秒)", poll_interval)
     while True:
-        await asyncio.sleep(_CHECK_INTERVAL)
-        settings = Settings()  # type: ignore[call-arg]
-        missing = _missing_settings(settings)
-        if not missing:
-            logger.info("必須設定が揃いました。起動を続行します。")
-            return settings
-        logger.warning(
-            "まだ未設定の項目があります: %s (%d 秒後に再確認)",
-            ", ".join(missing),
-            _CHECK_INTERVAL,
-        )
+        await asyncio.sleep(poll_interval)
+        urls = log_store.pop_api_queue()
+        if urls:
+            logger.info("API キューを処理: %d 件", len(urls))
+            for url in urls:
+                await _download_url_direct(url, downloader, twitter, log_store, loop)
 
 
 async def async_main() -> None:
@@ -83,7 +116,6 @@ async def async_main() -> None:
 
     settings = Settings()  # type: ignore[call-arg]
     _setup_logging(settings.log_level)
-    logger = logging.getLogger(__name__)
     logger.info("x-keeper を起動します")
 
     log_store = LogStore(settings.save_path)
@@ -102,8 +134,6 @@ async def async_main() -> None:
     ).start()
     logger.info("Web サーバーを起動しました (http://localhost:%d)", settings.web_setup_port)
 
-    settings = await _wait_for_required_settings(settings, logger)
-
     twitter = TwitterClient(settings.gallery_dl_cookies_file)
     downloader = MediaDownloader(
         settings.save_path,
@@ -112,14 +142,7 @@ async def async_main() -> None:
         log_store,
     )
 
-    channel_ids = settings.channel_ids
-    bot = XKeeperBot(
-        channel_ids, twitter, downloader, log_store,
-        retry_poll_interval=settings.retry_poll_interval,
-        scan_interval=settings.scan_interval,
-    )
-    logger.info("Discord Bot を起動します (チャンネル ID: %s)...", channel_ids)
-    await bot.start(settings.discord_bot_token)
+    await _api_queue_loop(downloader, twitter, log_store, settings.retry_poll_interval)
 
 
 def main() -> None:

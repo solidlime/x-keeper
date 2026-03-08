@@ -16,7 +16,6 @@ class LogStore:
         self._data_dir = Path(data_dir)
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._log_file = self._data_dir / "_download_log.json"
-        self._retry_file = self._data_dir / "_retry_queue.json"
         self._ids_file = self._data_dir / "_downloaded_ids.json"
         # Chrome 拡張 / Android アプリから直接投入されたダウンロード URL キュー
         self._api_queue_file = self._data_dir / "_api_queue.json"
@@ -52,55 +51,21 @@ class LogStore:
 
     # ── ログ書き込み ──────────────────────────────────────────────────────────
 
-    def append_success(
-        self,
-        message_id: int,
-        channel_id: int,
-        urls: list[str],
-        file_count: int,
-    ) -> None:
+    def append_success(self, urls: list[str], file_count: int) -> None:
+        """ダウンロード成功を記録する。"""
         self._append_log({
             "ts": datetime.now().isoformat(timespec="seconds"),
             "status": "success",
-            "message_id": message_id,
-            "channel_id": channel_id,
             "urls": urls,
             "file_count": file_count,
         })
 
-    def append_failure(
-        self,
-        message_id: int,
-        channel_id: int,
-        urls: list[str],
-        error: str,
-    ) -> None:
+    def append_failure(self, urls: list[str], error: str) -> None:
+        """ダウンロード失敗を記録する。"""
         self._append_log({
             "ts": datetime.now().isoformat(timespec="seconds"),
             "status": "failure",
-            "message_id": message_id,
-            "channel_id": channel_id,
             "urls": urls,
-            "error": error,
-        })
-
-    def append_api_success(self, url: str, file_count: int) -> None:
-        """Chrome 拡張 / Android アプリからの直接ダウンロード成功を記録する。"""
-        self._append_log({
-            "ts": datetime.now().isoformat(timespec="seconds"),
-            "status": "success",
-            "source": "api",
-            "urls": [url],
-            "file_count": file_count,
-        })
-
-    def append_api_failure(self, url: str, error: str) -> None:
-        """Chrome 拡張 / Android アプリからの直接ダウンロード失敗を記録する。"""
-        self._append_log({
-            "ts": datetime.now().isoformat(timespec="seconds"),
-            "status": "failure",
-            "source": "api",
-            "urls": [url],
             "error": error,
         })
 
@@ -112,39 +77,22 @@ class LogStore:
         return list(reversed(logs[-limit:]))
 
     def get_failures(self) -> list[dict]:
-        """message_id ごとに最新エントリが failure のものだけ返す。"""
+        """URL ごとに最新エントリが failure のものだけ返す。"""
         with self._lock:
             logs = self._read(self._log_file)
-        seen: set[int] = set()
+        seen: set[str] = set()
         result = []
         for entry in reversed(logs):
-            mid = entry.get("message_id")
-            if mid in seen:
+            # タイムスタンプ + 最初の URL でユニーク化する
+            # (message_id がない API ソースが全て1件に集約されるバグを修正)
+            urls = entry.get("urls") or []
+            key = f"{entry.get('ts', '')}|{urls[0] if urls else ''}"
+            if key in seen:
                 continue
-            seen.add(mid)
+            seen.add(key)
             if entry.get("status") == "failure":
                 result.append(entry)
         return result
-
-    # ── リトライキュー ────────────────────────────────────────────────────────
-
-    def queue_retry(self, message_id: int, channel_id: int) -> None:
-        with self._lock:
-            items = self._read(self._retry_file)
-            if not any(
-                e["message_id"] == message_id and e["channel_id"] == channel_id
-                for e in items
-            ):
-                items.append({"message_id": message_id, "channel_id": channel_id})
-                self._write(self._retry_file, items)
-
-    def pop_retry_queue(self) -> list[dict]:
-        """キュー全件を取り出してクリアする。"""
-        with self._lock:
-            items = self._read(self._retry_file)
-            if items:
-                self._write(self._retry_file, [])
-        return items
 
     # ── ダウンロード済み tweet ID 管理 ─────────────────────────────────────
 

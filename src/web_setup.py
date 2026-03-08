@@ -50,7 +50,7 @@ def set_log_store(store) -> None:
 def _add_cors_headers(response):
     """全レスポンスに CORS ヘッダーを付与する。"""
     response.headers.setdefault("Access-Control-Allow-Origin", "*")
-    response.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+    response.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
     response.headers.setdefault("Access-Control-Allow-Headers", "Content-Type")
     return response
 
@@ -59,12 +59,12 @@ def _cors_preflight():
     """OPTIONS プリフライトリクエストに対して 204 を返す。"""
     response = app.make_response(("", 204))
     response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
 
 
-# X/Pixiv/Imgur URL を受け付けるパターン (discord_bot.py と同じ定義)
+# X/Pixiv/Imgur URL を受け付けるパターン
 _API_URL_PATTERN = re.compile(
     r"https?://(?:"
     r"(?:twitter\.com|x\.com)/[A-Za-z0-9_]+/(?:status/\d+|media)"
@@ -179,7 +179,7 @@ _INDEX_HTML = (
 <div class="card shadow-sm">
   <div class="card-body p-4">
     <h4 class="card-title mb-1">x-keeper セットアップ</h4>
-    <p class="text-muted mb-4">Discord Bot の設定を行います。</p>
+    <p class="text-muted mb-4">各種設定を行います。</p>
 
     <!-- 現在の設定状態 -->
     <h6 class="fw-bold">現在の設定状態</h6>
@@ -196,64 +196,9 @@ _INDEX_HTML = (
       {% endfor %}
     </ul>
 
-    <!-- Discord Bot セットアップ手順 -->
-    <h6 class="fw-bold">Bot Token / Channel ID の取得方法</h6>
-    <details class="mb-4">
-      <summary>Discord Developer Portal での設定手順を見る</summary>
-      <div class="details-body small">
-        <p class="fw-semibold mb-1">Bot Token の取得</p>
-        <ol class="mb-3 ps-3">
-          <li class="mb-1">
-            <a href="https://discord.com/developers/applications" target="_blank" rel="noopener">
-              Discord Developer Portal
-            </a> を開き「New Application」でアプリを作成する
-          </li>
-          <li class="mb-1">「Bot」タブ → 「Reset Token」でトークンを取得してコピー</li>
-          <li class="mb-1">同じ画面の「Privileged Gateway Intents」で
-            <strong>「Message Content Intent」を ON</strong> にして保存</li>
-          <li class="mb-1">「OAuth2」タブ → 「URL Generator」→ スコープ <code>bot</code> を選択<br>
-            Bot Permissions: <code>Read Messages/View Channels</code>・<code>Add Reactions</code>・<code>Read Message History</code><br>
-            生成された URL でサーバーに招待する</li>
-        </ol>
-        <p class="fw-semibold mb-1">Channel ID の取得</p>
-        <ol class="mb-0 ps-3">
-          <li class="mb-1">Discord アプリの「設定」→「詳細設定」→「開発者モード」を ON にする</li>
-          <li class="mb-1">監視したいチャンネルを右クリック →「チャンネル ID をコピー」</li>
-        </ol>
-      </div>
-    </details>
-
-    <!-- 設定フォーム -->
-    <h6 class="fw-bold">設定を入力</h6>
-    {% if saved %}
-    <div class="alert alert-success py-2 small">設定を保存しました。</div>
-    {% endif %}
     {% if error %}
     <div class="alert alert-danger py-2 small">{{ error }}</div>
     {% endif %}
-
-    <form method="post" action="/save-discord">
-      <div class="mb-3">
-        <label class="form-label fw-semibold">Bot Token <span class="text-danger">*</span></label>
-        <input type="password" class="form-control font-monospace"
-               name="bot_token" required
-               placeholder="MTxxxxxxxxxxxxxxxxxxxxxxxx.Gxxxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
-      </div>
-      <div class="mb-4">
-        <label class="form-label fw-semibold">Channel ID <span class="text-danger">*</span></label>
-        <input type="text" class="form-control font-monospace"
-               name="channel_id" required
-               placeholder="1234567890123456789"
-               value="{{ prefill.channel_id }}">
-        <div class="form-text">
-          数字のみ。複数チャンネルを監視する場合はカンマ区切りで入力。<br>
-          例: <code>111222333444555666,777888999000111222</code>
-        </div>
-      </div>
-      <button type="submit" class="btn btn-primary w-100">保存する</button>
-    </form>
-
-    <hr class="my-4">
 
     <!-- Cookie ファイル設定 -->
     <h6 class="fw-bold">
@@ -367,41 +312,27 @@ _INDEX_HTML = (
 
     <hr class="my-4">
 
-    <!-- Bot 動作設定 -->
+    <!-- キュー設定 -->
     <h6 class="fw-bold">
-      Bot 動作設定
+      キュー設定
       <span class="badge bg-secondary fw-normal ms-1">任意</span>
     </h6>
     <p class="small text-muted mb-3">
-      再試行・定期スキャンのタイミングを調整します。変更は Bot の再起動後に反映されます。
+      ポーリング間隔とギャラリー表示を調整します。変更はサーバーの再起動後に反映されます。
     </p>
 
     {% if bot_config_saved %}
-    <div class="alert alert-success py-2 small">Bot 動作設定を保存しました。</div>
+    <div class="alert alert-success py-2 small">設定を保存しました。</div>
     {% endif %}
 
     <form method="post" action="/save-bot-config">
       <div class="mb-3">
-        <label class="form-label fw-semibold">リトライキュー処理間隔 (秒)</label>
+        <label class="form-label fw-semibold">API キューポーリング間隔 (秒)</label>
         <input type="number" class="form-control" name="retry_poll_interval"
                min="5" max="300" value="{{ prefill.retry_poll_interval }}">
         <div class="form-text">
-          Web UI の「リトライ」ボタンを押してから Bot が処理を開始するまでの最大待機時間。<br>
+          Chrome 拡張・Android アプリから投入された URL をサーバーが処理する間隔。<br>
           推奨: <code>30</code>（デフォルト）
-        </div>
-      </div>
-      <div class="mb-3">
-        <label class="form-label fw-semibold">未処理メッセージの定期スキャン間隔</label>
-        <select class="form-select" name="scan_interval">
-          <option value="0"    {% if prefill.scan_interval == "0"     %}selected{% endif %}>起動時のみ（デフォルト）</option>
-          <option value="3600" {% if prefill.scan_interval == "3600"  %}selected{% endif %}>1 時間ごと</option>
-          <option value="10800"{% if prefill.scan_interval == "10800" %}selected{% endif %}>3 時間ごと</option>
-          <option value="21600"{% if prefill.scan_interval == "21600" %}selected{% endif %}>6 時間ごと</option>
-          <option value="86400"{% if prefill.scan_interval == "86400" %}selected{% endif %}>24 時間ごと</option>
-        </select>
-        <div class="form-text">
-          ✅ 未付与のメッセージを自動で再ダウンロードする頻度。<br>
-          「起動時のみ」は安全ですが、長期稼働時に取りこぼしが残ることがあります。
         </div>
       </div>
       <div class="mb-3">
@@ -415,6 +346,39 @@ _INDEX_HTML = (
       </div>
       <button type="submit" class="btn btn-outline-primary">保存する</button>
     </form>
+
+    <hr class="my-4">
+    <h6 class="fw-bold">パッケージ更新</h6>
+    <p class="small text-muted mb-3">gallery-dl を最新バージョンに更新します。</p>
+    <button type="button" class="btn btn-outline-secondary" onclick="updatePackages(this)">
+      gallery-dl を更新する
+    </button>
+    <div id="update-result" class="mt-2 small"></div>
+    <script>
+    async function updatePackages(btn) {
+      btn.disabled = true;
+      btn.textContent = '更新中...';
+      document.getElementById('update-result').textContent = '';
+      try {
+        const res = await fetch('/api/update', {method: 'POST'});
+        const data = await res.json();
+        if (data.already_up_to_date) {
+          document.getElementById('update-result').innerHTML = '<span class="text-success">最新バージョンです</span>';
+        } else if (data.version) {
+          document.getElementById('update-result').innerHTML = `<span class="text-success">gallery-dl ${data.version} に更新しました</span>`;
+        } else if (!data.ok) {
+          document.getElementById('update-result').innerHTML = `<span class="text-danger">エラー: ${data.error || data.output}</span>`;
+        } else {
+          document.getElementById('update-result').innerHTML = '<span class="text-success">更新完了</span>';
+        }
+      } catch (e) {
+        document.getElementById('update-result').innerHTML = `<span class="text-danger">通信エラー: ${e}</span>`;
+      } finally {
+        btn.textContent = 'gallery-dl を更新する';
+        btn.disabled = false;
+      }
+    }
+    </script>
   </div>
 </div>
 </body></html>
@@ -1589,11 +1553,6 @@ _QUEUE_HTML = (
     <h5 class="mb-0">失敗リスト</h5>
     <span class="text-muted small">{{ failure_entries|length }} 件</span>
   </div>
-  {% if queued %}
-  <div class="alert alert-success py-2 small">
-    リトライをキューに追加しました。Bot が数秒以内に処理します。
-  </div>
-  {% endif %}
   {% if not failure_entries %}
   <p class="text-muted">失敗した処理はありません。</p>
   {% else %}
@@ -1604,7 +1563,6 @@ _QUEUE_HTML = (
           <th class="text-nowrap">時刻</th>
           <th>URL</th>
           <th>エラー</th>
-          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -1620,11 +1578,6 @@ _QUEUE_HTML = (
           </td>
           <td class="small text-danger">
             <span title="{{ e.error }}">{{ e.error[:80] }}{% if e.error|length > 80 %}…{% endif %}</span>
-          </td>
-          <td>
-            <form method="post" action="/retry/{{ e.message_id }}/{{ e.channel_id }}">
-              <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">リトライ</button>
-            </form>
           </td>
         </tr>
         {% endfor %}
@@ -1678,11 +1631,6 @@ _FAILURES_HTML = (
     <h5 class="mb-0">失敗リスト</h5>
     <span class="text-muted small">{{ entries|length }} 件</span>
   </div>
-  {% if queued %}
-  <div class="alert alert-success py-2 small">
-    リトライをキューに追加しました。Bot が数秒以内に処理します。
-  </div>
-  {% endif %}
   {% if not entries %}
   <p class="text-muted">失敗した処理はありません。</p>
   {% else %}
@@ -1693,7 +1641,6 @@ _FAILURES_HTML = (
           <th class="text-nowrap">時刻</th>
           <th>URL</th>
           <th>エラー</th>
-          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -1709,11 +1656,6 @@ _FAILURES_HTML = (
           </td>
           <td class="small text-danger">
             <span title="{{ e.error }}">{{ e.error[:80] }}{% if e.error|length > 80 %}…{% endif %}</span>
-          </td>
-          <td>
-            <form method="post" action="/retry/{{ e.message_id }}/{{ e.channel_id }}">
-              <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">リトライ</button>
-            </form>
           </td>
         </tr>
         {% endfor %}
@@ -1745,7 +1687,7 @@ def _current_status() -> dict[str, bool]:
     from dotenv import dotenv_values
 
     env = dotenv_values(_ENV_FILE) if _ENV_FILE.exists() else {}
-    keys = ["DISCORD_BOT_TOKEN", "DISCORD_CHANNEL_ID", "GALLERY_DL_COOKIES_FILE", "PIXIV_REFRESH_TOKEN"]
+    keys = ["GALLERY_DL_COOKIES_FILE", "PIXIV_REFRESH_TOKEN"]
     return {k: bool(env.get(k)) for k in keys}
 
 
@@ -1754,7 +1696,6 @@ def _prefill_values() -> dict[str, str]:
 
     env = dotenv_values(_ENV_FILE) if _ENV_FILE.exists() else {}
     return {
-        "channel_id": env.get("DISCORD_CHANNEL_ID", ""),
         "cookies_file": env.get("GALLERY_DL_COOKIES_FILE", ""),
         "pixiv_token": env.get("PIXIV_REFRESH_TOKEN", ""),
         "retry_poll_interval": env.get("RETRY_POLL_INTERVAL", "30"),
@@ -1768,21 +1709,18 @@ def _prefill_values() -> dict[str, str]:
 
 @app.route("/")
 def index():
-    # フラッシュパラメータや明示的セットアップ要求がなく、Pixiv OAuth中でもなければ
-    # Discord が設定済みの場合はギャラリーへリダイレクト
-    _flash_keys = {"saved", "error", "cookies_saved", "pixiv_saved", "pixiv_error",
-                   "bot_config_saved", "setup"}
-    has_flash = any(request.args.get(k) for k in _flash_keys)
+    # ?setup=1 または Pixiv OAuth 中以外は常にギャラリーへリダイレクトする
+    has_setup = request.args.get("setup") == "1"
     has_pixiv_oauth = bool(session.get("pixiv_auth_url"))
-    if not has_flash and not has_pixiv_oauth:
-        st = _current_status()
-        if st.get("DISCORD_BOT_TOKEN") and st.get("DISCORD_CHANNEL_ID"):
-            return redirect("/gallery")
+    has_flash = any(request.args.get(k) for k in {
+        "error", "cookies_saved", "pixiv_saved", "pixiv_error", "bot_config_saved"
+    })
+    if not has_setup and not has_pixiv_oauth and not has_flash:
+        return redirect("/gallery")
     return render_template_string(
         _INDEX_HTML,
         status=_current_status(),
         prefill=_prefill_values(),
-        saved=request.args.get("saved") == "1",
         error=request.args.get("error"),
         cookies_saved=request.args.get("cookies_saved") == "1",
         pixiv_saved=request.args.get("pixiv_saved") == "1",
@@ -1790,23 +1728,6 @@ def index():
         pixiv_auth_url=session.get("pixiv_auth_url"),
         bot_config_saved=request.args.get("bot_config_saved") == "1",
     )
-
-
-@app.route("/save-discord", methods=["POST"])
-def save_discord():
-    bot_token = request.form.get("bot_token", "").strip()
-    channel_id = request.form.get("channel_id", "").strip()
-
-    if not bot_token or not channel_id:
-        return redirect("/?error=Bot+Token+と+Channel+ID+は必須です")
-
-    ids = [x.strip() for x in channel_id.split(",") if x.strip()]
-    if not ids or not all(x.isdigit() for x in ids):
-        return redirect("/?error=Channel+ID+は数字のみで入力してください（複数の場合はカンマ区切り）")
-
-    upsert_env_value("DISCORD_BOT_TOKEN", bot_token)
-    upsert_env_value("DISCORD_CHANNEL_ID", channel_id)
-    return redirect("/?saved=1")
 
 
 @app.route("/save-cookies", methods=["POST"])
@@ -1819,13 +1740,10 @@ def save_cookies():
 @app.route("/save-bot-config", methods=["POST"])
 def save_bot_config():
     retry_poll_interval = request.form.get("retry_poll_interval", "30").strip()
-    scan_interval = request.form.get("scan_interval", "0").strip()
     gallery_thumb_count = request.form.get("gallery_thumb_count", "50").strip()
-    if (not retry_poll_interval.isdigit() or not scan_interval.isdigit()
-            or not gallery_thumb_count.isdigit()):
+    if not retry_poll_interval.isdigit() or not gallery_thumb_count.isdigit():
         return redirect("/?setup=1&error=数値を入力してください")
     upsert_env_value("RETRY_POLL_INTERVAL", retry_poll_interval)
-    upsert_env_value("SCAN_INTERVAL", scan_interval)
     upsert_env_value("GALLERY_THUMB_COUNT", gallery_thumb_count)
     return redirect("/?setup=1&bot_config_saved=1")
 
@@ -2122,7 +2040,6 @@ def queue_page():
         _QUEUE_HTML,
         queue_items=queue_items,
         failure_entries=failure_entries,
-        queued=request.args.get("queued") == "1",
     )
 
 
@@ -2131,14 +2048,37 @@ def failures():
     return redirect("/queue")
 
 
-@app.route("/retry/<int:message_id>/<int:channel_id>", methods=["POST"])
-def retry(message_id: int, channel_id: int):
-    if _log_store:
-        _log_store.queue_retry(message_id, channel_id)
-    return redirect("/queue?queued=1")
+# ── REST API (Chrome 拡張 / Android アプリ向け) ───────────────────────────────
 
 
-# ── REST API (Tampermonkey / Android アプリ向け) ──────────────────────────────
+@app.route("/api/update", methods=["POST", "OPTIONS"])
+def api_update():
+    """gallery-dl を最新バージョンに更新する。"""
+    if request.method == "OPTIONS":
+        return _cors_preflight()
+    import subprocess
+    import re as _re
+    try:
+        result = subprocess.run(
+            ["pip", "install", "--upgrade", "gallery-dl"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        output = result.stdout + result.stderr
+        match = _re.search(r"Successfully installed gallery-dl-([\d.]+)", output)
+        version = match.group(1) if match else None
+        already = "already up-to-date" in output.lower() or "already satisfied" in output.lower()
+        return jsonify({
+            "ok": result.returncode == 0,
+            "version": version,
+            "already_up_to_date": already,
+            "output": output[-2000:],
+        })
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "タイムアウト (120秒)"}), 500
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 @app.route("/api/health")
