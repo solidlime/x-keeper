@@ -1,7 +1,7 @@
 """
 エントリーポイント。
 X (Twitter) / Pixiv / Imgur メディアを API キュー経由でダウンロードするメインループ。
-Discord 非依存: Chrome 拡張・Android アプリから直接 URL を投入する。
+Chrome 拡張・Android アプリから直接 URL を投入する。
 """
 
 import asyncio

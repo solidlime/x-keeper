@@ -205,8 +205,7 @@ class LogStore:
             return []
 
     # ── API 直接ダウンロードキュー ─────────────────────────────────────────────
-    # Chrome 拡張 / Android アプリから Discord を経由せずに
-    # 直接投入された URL を管理する。
+    # Chrome 拡張 / Android アプリから直接投入された URL を管理する。
 
     def queue_url_download(self, url: str) -> None:
         """URL を直接ダウンロードキューに追加する。重複 URL は追加しない。"""

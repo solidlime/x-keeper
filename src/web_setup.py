@@ -1,5 +1,5 @@
 """
-Web サーバー。Discord セットアップ UI + /gallery メディアビューア + ログ/失敗管理。
+Web サーバー。設定 UI + /gallery メディアビューア + ログ管理。
 
 起動方法:
     python -m src.web_setup
@@ -1699,7 +1699,6 @@ def _prefill_values() -> dict[str, str]:
         "cookies_file": env.get("GALLERY_DL_COOKIES_FILE", ""),
         "pixiv_token": env.get("PIXIV_REFRESH_TOKEN", ""),
         "retry_poll_interval": env.get("RETRY_POLL_INTERVAL", "30"),
-        "scan_interval": env.get("SCAN_INTERVAL", "0"),
         "gallery_thumb_count": env.get("GALLERY_THUMB_COUNT", "50"),
     }
 
@@ -2135,11 +2134,10 @@ def api_logs_recent():
     """直近のダウンロード処理結果を最新 5 件返す。
 
     Chrome 拡張のポップアップがサーバー側の処理状態を確認するために使用する。
-    Discord 経由・API 直接投入の両方のログを返す。
 
     Response:
         [{"ts": "...", "status": "success"|"failure", "urls": [...],
-          "file_count": N, "error": "...", "source": "api"|"discord"}, ...]
+          "file_count": N, "error": "..."}, ...]
     """
     if not _log_store:
         return jsonify({"error": "log store not available"}), 503
@@ -2151,7 +2149,6 @@ def api_logs_recent():
             "urls": entry.get("urls", []),
             "file_count": entry.get("file_count"),
             "error": entry.get("error"),
-            "source": entry.get("source", "discord"),
         }
         for entry in logs
     ]
