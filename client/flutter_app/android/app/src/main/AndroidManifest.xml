@@ -26,10 +26,21 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
 
-            <!--
-              共有インテント: ブラウザなどから URL テキストを共有したとき
-              x-keeper がアプリ一覧に表示される。
-            -->
+        </activity>
+
+        <!--
+          共有インテント専用の透明 Activity。
+          Flutter エンジンを起動せずネイティブのみで処理するためウィンドウが表示されない。
+        -->
+        <activity
+            android:name=".ShareActivity"
+            android:exported="true"
+            android:theme="@style/ShareTheme"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="">
+
+            <!-- 共有インテント: ブラウザなどから URL テキストを共有したとき -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND"/>
                 <category android:name="android.intent.category.DEFAULT"/>

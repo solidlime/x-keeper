@@ -15,4 +15,6 @@
     <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
     </style>
+    <!-- 共有インテント処理用透明テーマ -->
+    <style name="ShareTheme" parent="@android:style/Theme.Translucent.NoTitleBar"/>
 </resources>

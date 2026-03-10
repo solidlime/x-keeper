@@ -22,17 +22,7 @@ import 'server_client.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final prefs = await SharedPreferences.getInstance();
-  final store = QueueStore(prefs);
-
-  // 共有インテントの有無を起動前に確認
-  final initialMedia = await ReceiveSharingIntent.instance.getInitialMedia();
-
-  if (initialMedia.isNotEmpty) {
-    // サイレント共有モード: UI を最小化してすぐ処理・終了
-    runApp(SilentShareApp(store: store, initialMedia: initialMedia));
-  } else {
-    runApp(XKeeperApp(store: store));
-  }
+  runApp(XKeeperApp(store: QueueStore(prefs)));
 }
 
 class XKeeperApp extends StatelessWidget {
@@ -916,86 +906,3 @@ bool _isSupportedUrl(String url) {
   ).hasMatch(url);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// サイレント共有ハンドラー
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// 共有インテント起動時に UI を表示せずにサーバーへ送信して即座に終了するアプリ。
-class SilentShareApp extends StatelessWidget {
-  const SilentShareApp({super.key, required this.store, required this.initialMedia});
-
-  final QueueStore store;
-  final List<SharedMediaFile> initialMedia;
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      home: _SilentSharePage(store: store, initialMedia: initialMedia),
-    );
-  }
-}
-
-class _SilentSharePage extends StatefulWidget {
-  const _SilentSharePage({required this.store, required this.initialMedia});
-
-  final QueueStore store;
-  final List<SharedMediaFile> initialMedia;
-
-  @override
-  State<_SilentSharePage> createState() => _SilentSharePageState();
-}
-
-class _SilentSharePageState extends State<_SilentSharePage> {
-  static const _toastChannel = MethodChannel('com.solidlime.xkeeper_client/toast');
-
-  @override
-  void initState() {
-    super.initState();
-    _processAndClose();
-  }
-
-  Future<void> _processAndClose() async {
-    final client = ServerClient(widget.store.serverUrl);
-
-    final urls = widget.initialMedia
-        .where((f) => f.type == SharedMediaType.text || f.type == SharedMediaType.url)
-        .map((f) => f.path.trim())
-        .where(_isSupportedUrl)
-        .toList();
-
-    String message;
-    if (urls.isEmpty) {
-      message = '対応していない URL です';
-    } else {
-      try {
-        final result = await client.queueUrls(urls);
-        message = '送信完了: ${result.accepted.length} 件';
-        // 送信成功時にオフラインキューもフラッシュ
-        final q = widget.store.offlineQueue;
-        if (q.isNotEmpty) {
-          try {
-            await client.queueUrls(q);
-            await widget.store.clear();
-          } catch (_) {}
-        }
-      } catch (_) {
-        for (final url in urls) {
-          await widget.store.enqueue(url);
-        }
-        message = '未接続。${urls.length} 件をキューに保存しました';
-      }
-    }
-
-    try {
-      await _toastChannel.invokeMethod('show', {'message': message});
-    } catch (_) {}
-
-    await SystemNavigator.pop();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return const Scaffold(body: SizedBox.shrink());
-  }
-}
