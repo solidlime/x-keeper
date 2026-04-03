@@ -242,8 +242,6 @@ class MediaDownloader:
         cmd.append(url)
         if self._cookies_file:
             cmd += ["--cookies", self._cookies_file]
-            # cookies あり = ログイン済み → conversations=true でスレッド全体を一括取得する
-            cmd += ["--option", "extractor.twitter.conversations=true"]
         if self._pixiv_refresh_token:
             cmd += ["-o", f"extractor.pixiv.refresh-token={self._pixiv_refresh_token}"]
 
