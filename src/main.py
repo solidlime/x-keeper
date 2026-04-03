@@ -13,7 +13,6 @@ import threading
 from .config import Settings
 from .image_downloader import MediaDownloader
 from .log_store import LogStore
-from .twitter_client import TwitterClient
 from . import web_setup as _web_setup_module
 from .web_setup import app as _setup_app
 
@@ -53,7 +52,6 @@ def _setup_logging(level: str) -> None:
 async def _download_url_direct(
     url: str,
     downloader: MediaDownloader,
-    twitter: TwitterClient,
     log_store: LogStore,
     loop: asyncio.AbstractEventLoop,
 ) -> None:
@@ -74,14 +72,8 @@ async def _download_url_direct(
             log_store.append_success([url], len(saved))
             log_store.mark_downloaded_url(url)
         else:
-            thread = await loop.run_in_executor(
-                None, twitter.get_thread, url
-            )
-            if not thread.tweet_urls:
-                logger.info("メディアが見つかりませんでした: url=%s", url)
-                return
             result = await loop.run_in_executor(
-                None, downloader.download_all, thread.tweet_urls
+                None, downloader.download_all, [url]
             )
             logger.info(
                 "直接ダウンロード完了: url=%s, files=%d, skipped=%d",
@@ -95,7 +87,6 @@ async def _download_url_direct(
 
 async def _api_queue_loop(
     downloader: MediaDownloader,
-    twitter: TwitterClient,
     log_store: LogStore,
     poll_interval: int,
 ) -> None:
@@ -108,7 +99,7 @@ async def _api_queue_loop(
         if urls:
             logger.info("API キューを処理: %d 件", len(urls))
             for url in urls:
-                await _download_url_direct(url, downloader, twitter, log_store, loop)
+                await _download_url_direct(url, downloader, log_store, loop)
 
 
 async def async_main() -> None:
@@ -134,7 +125,6 @@ async def async_main() -> None:
     ).start()
     logger.info("Web サーバーを起動しました (http://localhost:%d)", settings.web_setup_port)
 
-    twitter = TwitterClient(settings.gallery_dl_cookies_file)
     downloader = MediaDownloader(
         settings.save_path,
         settings.gallery_dl_cookies_file,
@@ -142,7 +132,7 @@ async def async_main() -> None:
         log_store,
     )
 
-    await _api_queue_loop(downloader, twitter, log_store, settings.retry_poll_interval)
+    await _api_queue_loop(downloader, log_store, settings.retry_poll_interval)
 
 
 def main() -> None:

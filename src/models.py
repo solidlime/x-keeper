@@ -8,17 +8,6 @@ from datetime import date
 
 
 @dataclass
-class TweetThread:
-    """1つのスレッド (会話) に含まれる全ツイートの情報をまとめたもの。"""
-
-    conversation_id: str
-    """スレッドの起点となる会話 ID (起点ツイートの tweet_id)。"""
-
-    tweet_urls: list[str] = field(default_factory=list)
-    """スレッド内で検出した全ツイートの URL 一覧。"""
-
-
-@dataclass
 class SavedFile:
     """1ファイルの保存結果を表す。"""
 
