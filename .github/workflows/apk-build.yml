@@ -1,0 +1,71 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # GitHub Release 作成に必要
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Java 17
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter (stable)
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        working-directory: client/flutter_app
+        run: flutter pub get
+
+      - name: Build APK (release)
+        working-directory: client/flutter_app
+        run: flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@c6a366c94c3e0affe28c06c8df20a878f24da3cf # v3.2.2
+        with:
+          name: xkeeper-apk
+          path: client/flutter_app/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+
+      - name: Write job summary
+        if: always()
+        env:
+          BUILD_OUTCOME: ${{ job.status }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          {
+            echo "## APK Build Result"
+            echo "| Item | Value |"
+            echo "|------|-------|"
+            echo "| Status | $( [ "$BUILD_OUTCOME" = "success" ] && echo "✅ Success" || echo "❌ Failed" ) |"
+            echo "| Ref | \`$REF_NAME\` |"
+            echo "| APK | \`client/flutter_app/build/app/outputs/flutter-apk/app-release.apk\` |"
+          } >> $GITHUB_STEP_SUMMARY
+
+      # タグ push 時のみ GitHub Release を作成して APK を添付する
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2.6.1
+        with:
+          files: client/flutter_app/build/app/outputs/flutter-apk/app-release.apk
+          generate_release_notes: true

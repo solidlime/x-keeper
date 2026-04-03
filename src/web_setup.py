@@ -510,19 +510,19 @@ _GALLERY_INDEX_HTML = (
 <div class="container" style="max-width:1200px">
   <!-- 月ナビ + 並び替え -->
   <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
-    <a href="/gallery?year={{ prev_year }}&month={{ prev_month }}&sort={{ sort }}"
-       class="btn btn-sm btn-outline-secondary">‹</a>
-    <h5 class="mb-0">{{ year }}年{{ month }}月</h5>
-    <a href="/gallery?year={{ next_year }}&month={{ next_month }}&sort={{ sort }}"
-       class="btn btn-sm btn-outline-secondary">›</a>
-    <a href="/gallery?year={{ now_year }}&month={{ now_month }}&sort={{ sort }}"
-       class="btn btn-sm btn-outline-primary ms-1">今月</a>
-    <span class="text-muted small">{{ dates|length }} 日分</span>
+    <button id="btn-prev" class="btn btn-sm btn-outline-secondary"
+            data-year="{{ prev_year }}" data-month="{{ prev_month }}">‹</button>
+    <h5 class="mb-0" id="month-label">{{ year }}年{{ month }}月</h5>
+    <button id="btn-next" class="btn btn-sm btn-outline-secondary"
+            data-year="{{ next_year }}" data-month="{{ next_month }}">›</button>
+    <button id="btn-today" class="btn btn-sm btn-outline-primary ms-1"
+            data-year="{{ now_year }}" data-month="{{ now_month }}">今月</button>
+    <span class="text-muted small" id="date-count">{{ dates|length }} 日分</span>
     <div class="ms-auto btn-group btn-group-sm" role="group" aria-label="並び順">
-      <a href="/gallery?year={{ year }}&month={{ month }}&sort=new"
-         class="btn {{ 'btn-primary' if sort == 'new' else 'btn-outline-secondary' }}">新 → 古</a>
-      <a href="/gallery?year={{ year }}&month={{ month }}&sort=old"
-         class="btn {{ 'btn-primary' if sort == 'old' else 'btn-outline-secondary' }}">古 → 新</a>
+      <button id="btn-sort-new" class="btn {{ 'btn-primary' if sort == 'new' else 'btn-outline-secondary' }}"
+              data-sort="new">新 → 古</button>
+      <button id="btn-sort-old" class="btn {{ 'btn-primary' if sort == 'old' else 'btn-outline-secondary' }}"
+              data-sort="old">古 → 新</button>
     </div>
   </div>
 
@@ -570,7 +570,7 @@ _GALLERY_INDEX_HTML = (
           {% elif d.preloaded %}
           <p class="text-muted small m-0">ファイルがありません。</p>
           {% else %}
-          <div class="lazy-body text-center py-3" data-date="{{ d.name }}">
+          <div class="lazy-body text-center py-3" data-date="{{ d.name }}" data-sort="{{ sort }}">
             <div class="spinner-border spinner-border-sm text-secondary" role="status">
               <span class="visually-hidden">読み込み中...</span>
             </div>
@@ -939,8 +939,9 @@ _GALLERY_INDEX_HTML = (
     const body = accordion.querySelector('.lazy-body');
     if (!body) return;
     const date = body.dataset.date;
+    const sort = body.dataset.sort || curSort;
     try {
-      const res = await fetch(`/gallery/thumbs/${date}?sort={{ sort }}`);
+      const res = await fetch(`/gallery/thumbs/${date}?sort=${sort}`);
       const html = await res.text();
       body.innerHTML = html;
       body.classList.remove('lazy-body');
@@ -949,28 +950,34 @@ _GALLERY_INDEX_HTML = (
     }
   }
 
-  document.querySelectorAll('.date-accordion').forEach(acc => {
-    acc.addEventListener('toggle', () => {
-      if (acc.open) loadDate(acc);
+  function setupAccordionListeners() {
+    document.querySelectorAll('.date-accordion').forEach(acc => {
+      acc.addEventListener('toggle', () => {
+        if (acc.open) loadDate(acc);
+      });
     });
-  });
+  }
+  setupAccordionListeners();
 
   // ── 無限スクロール (IntersectionObserver) ────────────────────────────────
-  const sentinel = document.getElementById('scroll-sentinel');
-  if (sentinel) {
-    const observer = new IntersectionObserver(entries => {
+  let scrollObserver = null;
+  function setupInfiniteScroll() {
+    if (scrollObserver) scrollObserver.disconnect();
+    const sentinel = document.getElementById('scroll-sentinel');
+    if (!sentinel) return;
+    scrollObserver = new IntersectionObserver(entries => {
       if (!entries[0].isIntersecting) return;
       const next = document.querySelector('.date-accordion[data-loaded="false"]');
-      if (!next) { observer.disconnect(); return; }
+      if (!next) { scrollObserver.disconnect(); return; }
       next.open = true;
-      // toggle イベントが loadDate を呼ぶ
+      loadDate(next);
     }, { rootMargin: '200px' });
-    observer.observe(sentinel);
+    scrollObserver.observe(sentinel);
   }
+  setupInfiniteScroll();
 
   // ── カレンダー描画 ────────────────────────────────────────────────────────
-  (async function buildCalendar() {
-    const year = {{ year }}, month = {{ month }};
+  async function buildCalendar(year, month) {
     const grid = document.getElementById('cal-grid');
     if (!grid) return;
     // 既存の曜日ヘッダ以外を削除
@@ -1008,7 +1015,89 @@ _GALLERY_INDEX_HTML = (
       }
       grid.appendChild(el);
     }
-  })();
+  }
+
+  // 現在の年月・ソートを JS 変数として保持
+  let curYear  = {{ year }};
+  let curMonth = {{ month }};
+  let curSort  = '{{ sort }}';
+
+  // 初期カレンダー描画
+  buildCalendar(curYear, curMonth);
+
+  // ── 月切り替え + ソート: AJAX で更新 ─────────────────────────────────────
+  function updateSortButtons(sort) {
+    document.getElementById('btn-sort-new').className =
+      'btn btn-sm ' + (sort === 'new' ? 'btn-primary' : 'btn-outline-secondary');
+    document.getElementById('btn-sort-old').className =
+      'btn btn-sm ' + (sort === 'old' ? 'btn-primary' : 'btn-outline-secondary');
+  }
+
+  function updateNavButtons(year, month) {
+    const prevM = month === 1 ? {y: year-1, m: 12} : {y: year, m: month-1};
+    const nextM = month === 12 ? {y: year+1, m: 1} : {y: year, m: month+1};
+    const btnPrev = document.getElementById('btn-prev');
+    const btnNext = document.getElementById('btn-next');
+    if (btnPrev) { btnPrev.dataset.year = prevM.y; btnPrev.dataset.month = prevM.m; }
+    if (btnNext) { btnNext.dataset.year = nextM.y; btnNext.dataset.month = nextM.m; }
+  }
+
+  async function switchMonth(year, month, sort, pushState = true) {
+    const accordionWrap = document.getElementById('accordion-wrap');
+    if (accordionWrap) accordionWrap.innerHTML = '<div class="text-center py-4"><div class="spinner-border text-secondary" role="status"></div></div>';
+    try {
+      const res = await fetch(`/gallery/fragment?year=${year}&month=${month}&sort=${sort}`);
+      const data = await res.json();
+      if (accordionWrap) accordionWrap.innerHTML = data.accordion_html;
+      // ラベル更新
+      const label = document.getElementById('month-label');
+      if (label) label.textContent = `${year}年${month}月`;
+      const count = document.getElementById('date-count');
+      if (count) count.textContent = `${data.count} 日分`;
+      // ナビボタンのdata属性更新
+      updateNavButtons(year, month);
+      updateSortButtons(sort);
+      // カレンダー再描画
+      buildCalendar(year, month);
+      // アコーディオン遅延読み込みイベント再登録
+      document.querySelectorAll('.date-accordion').forEach(acc => {
+        acc.addEventListener('toggle', () => { if (acc.open) loadDate(acc); });
+      });
+      // 無限スクロール再設定
+      setupInfiniteScroll();
+      curYear = year; curMonth = month; curSort = sort;
+      if (pushState) {
+        const url = `/gallery?year=${year}&month=${month}&sort=${sort}`;
+        history.pushState({ year, month, sort }, '', url);
+      }
+    } catch (e) {
+      if (accordionWrap) accordionWrap.innerHTML = '<p class="text-danger">読み込みに失敗しました: ' + e + '</p>';
+    }
+  }
+
+  // 月ナビボタン
+  document.getElementById('btn-prev')?.addEventListener('click', e => {
+    const btn = e.currentTarget;
+    switchMonth(+btn.dataset.year, +btn.dataset.month, curSort);
+  });
+  document.getElementById('btn-next')?.addEventListener('click', e => {
+    const btn = e.currentTarget;
+    switchMonth(+btn.dataset.year, +btn.dataset.month, curSort);
+  });
+  document.getElementById('btn-today')?.addEventListener('click', e => {
+    const btn = e.currentTarget;
+    switchMonth(+btn.dataset.year, +btn.dataset.month, curSort);
+  });
+
+  // ソートボタン
+  document.getElementById('btn-sort-new')?.addEventListener('click', () => switchMonth(curYear, curMonth, 'new'));
+  document.getElementById('btn-sort-old')?.addEventListener('click', () => switchMonth(curYear, curMonth, 'old'));
+
+  // ブラウザ戻る/進む
+  window.addEventListener('popstate', e => {
+    if (!e.state) return;
+    switchMonth(e.state.year, e.state.month, e.state.sort, false);
+  });
 
   // ── AJAX 検索 ─────────────────────────────────────────────────────────────
   const searchForm   = document.getElementById('search-form');
@@ -1098,6 +1187,74 @@ _THUMBS_FRAGMENT_HTML = """
   </div>
   {% endfor %}
 </div>
+{% endif %}
+"""
+
+_ACCORDION_FRAGMENT_HTML = """
+{% if not dates %}
+<p class="text-muted">この月のメディアはありません。</p>
+{% else %}
+<div id="accordion-list" class="d-flex flex-column gap-2">
+  {% for d in dates %}
+  <details {% if d.preloaded %}open{% endif %}
+           class="date-accordion" data-date="{{ d.name }}"
+           data-loaded="{{ 'true' if d.preloaded else 'false' }}">
+    <summary>
+      <span class="fw-semibold font-monospace">{{ d.name }}</span>
+      <span class="badge bg-secondary rounded-pill">{{ d.count }} ファイル</span>
+    </summary>
+    <div class="date-body">
+      {% if d.preloaded and d.files %}
+      <div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 row-cols-lg-5 g-2">
+        {% for f in d.files %}
+        <div class="col media-item" data-name="{{ f.name }}">
+          <button class="del-btn" data-path="{{ f.path }}" title="削除">🗑</button>
+          {% if f.type == "image" %}
+          <img src="/thumb/{{ f.path }}" loading="lazy" class="rounded media-thumb"
+               style="width:100%;aspect-ratio:1/1;object-fit:cover"
+               data-src="/media/{{ f.path }}" data-type="image" data-caption="{{ f.name }}"
+               data-path="{{ f.path }}" alt="{{ f.name }}">
+          {% elif f.type == "video" %}
+          <div class="position-relative media-thumb"
+               data-src="/media/{{ f.path }}" data-type="video" data-caption="{{ f.name }}"
+               data-path="{{ f.path }}"
+               style="aspect-ratio:16/9;background:#000;border-radius:.375rem;overflow:hidden">
+            <video muted preload="metadata"
+                   style="width:100%;height:100%;object-fit:cover;pointer-events:none">
+              <source src="/media/{{ f.path }}">
+            </video>
+            <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center">
+              <span style="font-size:2.5rem;opacity:.8">▶</span>
+            </div>
+          </div>
+          {% elif f.type == "audio" %}
+          <div class="p-2 bg-white rounded border">
+            <div class="small text-muted text-truncate mb-1" title="{{ f.name }}">{{ f.name }}</div>
+            <audio controls style="width:100%"><source src="/media/{{ f.path }}"></audio>
+          </div>
+          {% else %}
+          <div class="p-2 bg-white rounded border">
+            <a href="/media/{{ f.path }}" target="_blank"
+               class="small text-truncate d-block" title="{{ f.name }}">{{ f.name }}</a>
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% elif d.preloaded %}
+      <p class="text-muted small m-0">ファイルがありません。</p>
+      {% else %}
+      <div class="lazy-body text-center py-3" data-date="{{ d.name }}" data-sort="{{ sort }}">
+        <div class="spinner-border spinner-border-sm text-secondary" role="status">
+          <span class="visually-hidden">読み込み中...</span>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </details>
+  {% endfor %}
+</div>
+<div id="scroll-sentinel" style="height:1px;margin-top:40px"></div>
 {% endif %}
 """
 
@@ -2203,6 +2360,66 @@ def api_gallery_calendar():
                 if count > 0:
                     counts[date_dir.name] = count
     return jsonify(counts)
+
+
+@app.route("/gallery/fragment")
+def gallery_fragment():
+    """AJAX: 月別アコーディオン HTML + メタデータを JSON で返す。"""
+    from dotenv import dotenv_values
+    env = dotenv_values(_ENV_FILE) if _ENV_FILE.exists() else {}
+    try:
+        thumb_count = int(env.get("GALLERY_THUMB_COUNT", "50"))
+    except ValueError:
+        thumb_count = 50
+
+    now = datetime.now()
+    try:
+        year = int(request.args.get("year", now.year))
+        month = int(request.args.get("month", now.month))
+        if not (1 <= month <= 12):
+            return jsonify({"error": "invalid month"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "invalid year/month"}), 400
+
+    sort = request.args.get("sort", "new")
+    sort_reverse = sort != "old"
+    month_prefix = f"{year:04d}-{month:02d}"
+
+    save_path = Path(_SAVE_PATH)
+    date_data = []
+    if save_path.exists():
+        date_dirs = sorted(
+            [d for d in save_path.iterdir()
+             if d.is_dir() and re.match(r"^\d{4}-\d{2}-\d{2}$", d.name)
+             and d.name.startswith(month_prefix)],
+            reverse=sort_reverse,
+        )
+        total_preloaded = 0
+        for d in date_dirs:
+            files_sorted = sorted(
+                (f for f in d.iterdir() if f.is_file()),
+                key=lambda f: f.stat().st_mtime,
+                reverse=sort_reverse,
+            )
+            count = len(files_sorted)
+            if total_preloaded < thumb_count:
+                file_data = [
+                    {"name": f.name, "type": _media_type(f.name), "path": f"{d.name}/{f.name}"}
+                    for f in files_sorted
+                ]
+                total_preloaded += count
+                date_data.append({"name": d.name, "count": count, "files": file_data, "preloaded": True})
+            else:
+                date_data.append({"name": d.name, "count": count, "files": [], "preloaded": False})
+
+    accordion_html = render_template_string(_ACCORDION_FRAGMENT_HTML, dates=date_data, sort=sort)
+    return jsonify({
+        "accordion_html": accordion_html,
+        "count": len(date_data),
+        "year": year,
+        "month": month,
+        "sort": sort,
+    })
 
 
 @app.route("/logs")
