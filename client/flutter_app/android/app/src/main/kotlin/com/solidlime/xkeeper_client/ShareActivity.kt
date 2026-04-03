@@ -4,15 +4,15 @@ import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
 class ShareActivity : Activity() {
-
-    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -25,25 +25,20 @@ class ShareActivity : Activity() {
             return
         }
 
-        scope.launch {
-            val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+        val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+
+        // 即座にオフラインキューへ保存（UI をブロックしない）
+        saveOffline(prefs, sharedText)
+        toast("キューに追加しました")
+        finish()
+
+        // Activity 終了後もバックグラウンドで送信を試みる
+        // 失敗してもオフラインキューが残るため、次回 Flutter 起動時に再送される
+        CoroutineScope(Dispatchers.IO).launch {
             val serverUrl = (prefs.getString("flutter.xkeeper_server_url", null)
                 ?: "http://localhost:8989").trimEnd('/')
-
-            val message = withContext(Dispatchers.IO) {
-                sendUrl(serverUrl, sharedText) ?: run {
-                    saveOffline(prefs, sharedText)
-                    "未接続。キューに保存しました"
-                }
-            }
-            toast(message)
-            finish()
+            sendUrl(serverUrl, sharedText)
         }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        scope.cancel()
     }
 
     // --- ヘルパー ---

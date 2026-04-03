@@ -480,6 +480,22 @@ _GALLERY_INDEX_HTML = (
   #lb-next { right:.5rem; }
   #lb-hint { position:fixed; bottom:1rem; left:50%; transform:translateX(-50%);
              color:#aaa; font-size:.75rem; pointer-events:none; z-index:1060; }
+  /* カレンダー */
+  #cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:3px; margin-bottom:1rem; }
+  .cal-head { text-align:center; font-size:.7rem; font-weight:600;
+              color:#666; padding:2px 0; }
+  .cal-day {
+    text-align:center; font-size:.78rem; padding:4px 2px;
+    border-radius:6px; cursor:default; min-height:42px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px;
+  }
+  .cal-day.has-media { cursor:pointer; background:#e8f4fd; }
+  .cal-day.has-media:hover { background:#bde3fa; }
+  .cal-day.today { font-weight:700; color:#1d9bf0; }
+  .cal-badge { font-size:.65rem; background:#1d9bf0; color:#fff;
+               border-radius:10px; padding:0 5px; line-height:1.5; }
+  #search-results-wrap { display:none; }
+  #search-results-wrap.active { display:block; }
 </style>
 
 <!-- 複数選択ツールバー (Ctrl+クリックまたはドラッグ選択時に表示) -->
@@ -492,51 +508,81 @@ _GALLERY_INDEX_HTML = (
 <div id="select-rect"></div>
 
 <div class="container" style="max-width:1200px">
+  <!-- 月ナビ + 並び替え -->
   <div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
-    <h5 class="mb-0">ダウンロード済みメディア</h5>
+    <a href="/gallery?year={{ prev_year }}&month={{ prev_month }}&sort={{ sort }}"
+       class="btn btn-sm btn-outline-secondary">‹</a>
+    <h5 class="mb-0">{{ year }}年{{ month }}月</h5>
+    <a href="/gallery?year={{ next_year }}&month={{ next_month }}&sort={{ sort }}"
+       class="btn btn-sm btn-outline-secondary">›</a>
+    <a href="/gallery?year={{ now_year }}&month={{ now_month }}&sort={{ sort }}"
+       class="btn btn-sm btn-outline-primary ms-1">今月</a>
     <span class="text-muted small">{{ dates|length }} 日分</span>
     <div class="ms-auto btn-group btn-group-sm" role="group" aria-label="並び順">
-      <a href="/gallery?sort=new" class="btn {{ 'btn-primary' if sort == 'new' else 'btn-outline-secondary' }}">新 → 古</a>
-      <a href="/gallery?sort=old" class="btn {{ 'btn-primary' if sort == 'old' else 'btn-outline-secondary' }}">古 → 新</a>
+      <a href="/gallery?year={{ year }}&month={{ month }}&sort=new"
+         class="btn {{ 'btn-primary' if sort == 'new' else 'btn-outline-secondary' }}">新 → 古</a>
+      <a href="/gallery?year={{ year }}&month={{ month }}&sort=old"
+         class="btn {{ 'btn-primary' if sort == 'old' else 'btn-outline-secondary' }}">古 → 新</a>
     </div>
   </div>
-  <form method="get" action="/gallery/search" class="d-flex gap-2 mb-3">
-    <input type="text" name="q" class="form-control form-control-sm"
+
+  <!-- カレンダーグリッド -->
+  <div id="cal-grid" class="mb-3">
+    <div class="cal-head">日</div><div class="cal-head">月</div>
+    <div class="cal-head">火</div><div class="cal-head">水</div>
+    <div class="cal-head">木</div><div class="cal-head">金</div>
+    <div class="cal-head">土</div>
+  </div>
+
+  <!-- AJAX検索 -->
+  <form id="search-form" class="d-flex gap-2 mb-3">
+    <input id="search-q" type="text" name="q" class="form-control form-control-sm"
            placeholder="ファイル名で全日付を横断検索">
     <button type="submit" class="btn btn-sm btn-primary text-nowrap">検索</button>
+    <button type="button" id="btn-search-clear" class="btn btn-sm btn-outline-secondary text-nowrap" style="display:none">✕ クリア</button>
   </form>
-  {% if not dates %}
-  <p class="text-muted">まだメディアがありません。</p>
-  {% else %}
-  <div id="accordion-list" class="d-flex flex-column gap-2">
-    {% for d in dates %}
-    <details {% if d.preloaded %}open{% endif %}
-             class="date-accordion" data-date="{{ d.name }}"
-             data-loaded="{{ 'true' if d.preloaded else 'false' }}">
-      <summary>
-        <span class="fw-semibold font-monospace">{{ d.name }}</span>
-        <span class="badge bg-secondary rounded-pill">{{ d.count }} ファイル</span>
-      </summary>
-      <div class="date-body">
-        {% if d.preloaded and d.files %}
-        <div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 row-cols-lg-5 g-2">
-          {% for f in d.files %}{{ thumb_item(f) }}{% endfor %}
-        </div>
-        {% elif d.preloaded %}
-        <p class="text-muted small m-0">ファイルがありません。</p>
-        {% else %}
-        <div class="lazy-body text-center py-3" data-date="{{ d.name }}">
-          <div class="spinner-border spinner-border-sm text-secondary" role="status">
-            <span class="visually-hidden">読み込み中...</span>
-          </div>
-        </div>
-        {% endif %}
-      </div>
-    </details>
-    {% endfor %}
+
+  <!-- 検索結果 (インプレース) -->
+  <div id="search-results-wrap">
+    <p class="text-muted small mb-2" id="search-label"></p>
+    <div id="search-results"></div>
   </div>
-  <div id="scroll-sentinel" style="height:1px;margin-top:40px"></div>
-  {% endif %}
+
+  <!-- 月別アコーディオン -->
+  <div id="accordion-wrap">
+    {% if not dates %}
+    <p class="text-muted">この月のメディアはありません。</p>
+    {% else %}
+    <div id="accordion-list" class="d-flex flex-column gap-2">
+      {% for d in dates %}
+      <details {% if d.preloaded %}open{% endif %}
+               class="date-accordion" data-date="{{ d.name }}"
+               data-loaded="{{ 'true' if d.preloaded else 'false' }}">
+        <summary>
+          <span class="fw-semibold font-monospace">{{ d.name }}</span>
+          <span class="badge bg-secondary rounded-pill">{{ d.count }} ファイル</span>
+        </summary>
+        <div class="date-body">
+          {% if d.preloaded and d.files %}
+          <div class="row row-cols-2 row-cols-sm-3 row-cols-md-4 row-cols-lg-5 g-2">
+            {% for f in d.files %}{{ thumb_item(f) }}{% endfor %}
+          </div>
+          {% elif d.preloaded %}
+          <p class="text-muted small m-0">ファイルがありません。</p>
+          {% else %}
+          <div class="lazy-body text-center py-3" data-date="{{ d.name }}">
+            <div class="spinner-border spinner-border-sm text-secondary" role="status">
+              <span class="visually-hidden">読み込み中...</span>
+            </div>
+          </div>
+          {% endif %}
+        </div>
+      </details>
+      {% endfor %}
+    </div>
+    <div id="scroll-sentinel" style="height:1px;margin-top:40px"></div>
+    {% endif %}
+  </div>
 </div>
 
 <!-- ライトボックス -->
@@ -921,6 +967,91 @@ _GALLERY_INDEX_HTML = (
     }, { rootMargin: '200px' });
     observer.observe(sentinel);
   }
+
+  // ── カレンダー描画 ────────────────────────────────────────────────────────
+  (async function buildCalendar() {
+    const year = {{ year }}, month = {{ month }};
+    const grid = document.getElementById('cal-grid');
+    if (!grid) return;
+    // 既存の曜日ヘッダ以外を削除
+    Array.from(grid.children).forEach((el, i) => { if (i >= 7) el.remove(); });
+    let counts = {};
+    try {
+      const res = await fetch(`/api/gallery/calendar?year=${year}&month=${month}`);
+      counts = await res.json();
+    } catch {}
+    const today = new Date();
+    const firstDay = new Date(year, month - 1, 1).getDay(); // 0=日
+    const daysInMonth = new Date(year, month, 0).getDate();
+    // 空白セル
+    for (let i = 0; i < firstDay; i++) {
+      const el = document.createElement('div'); el.className = 'cal-day';
+      grid.appendChild(el);
+    }
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${String(year).padStart(4,'0')}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const count = counts[dateStr];
+      const el = document.createElement('div');
+      el.className = 'cal-day' + (count ? ' has-media' : '');
+      if (today.getFullYear() === year && today.getMonth() + 1 === month && today.getDate() === d)
+        el.classList.add('today');
+      el.innerHTML = `<span>${d}</span>` + (count ? `<span class="cal-badge">${count}</span>` : '');
+      if (count) {
+        el.title = `${dateStr}: ${count} ファイル`;
+        el.addEventListener('click', () => {
+          const acc = document.querySelector(`.date-accordion[data-date="${dateStr}"]`);
+          if (!acc) return;
+          acc.open = true;
+          loadDate(acc);
+          acc.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      }
+      grid.appendChild(el);
+    }
+  })();
+
+  // ── AJAX 検索 ─────────────────────────────────────────────────────────────
+  const searchForm   = document.getElementById('search-form');
+  const searchQ      = document.getElementById('search-q');
+  const resultsWrap  = document.getElementById('search-results-wrap');
+  const resultsEl    = document.getElementById('search-results');
+  const searchLabel  = document.getElementById('search-label');
+  const clearBtn     = document.getElementById('btn-search-clear');
+  const accordionWrap = document.getElementById('accordion-wrap');
+
+  function showResults(html, q) {
+    resultsEl.innerHTML = html;
+    searchLabel.textContent = `🔍 "${q}" の検索結果`;
+    resultsWrap.classList.add('active');
+    if (accordionWrap) accordionWrap.style.display = 'none';
+    clearBtn.style.display = '';
+  }
+
+  function clearSearch() {
+    resultsWrap.classList.remove('active');
+    resultsEl.innerHTML = '';
+    searchLabel.textContent = '';
+    if (accordionWrap) accordionWrap.style.display = '';
+    clearBtn.style.display = 'none';
+    searchQ.value = '';
+  }
+
+  searchForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    const q = searchQ.value.trim();
+    if (!q) { clearSearch(); return; }
+    try {
+      const res = await fetch(`/gallery/search?q=${encodeURIComponent(q)}&fragment=1`);
+      const html = await res.text();
+      showResults(html, q);
+    } catch (err) {
+      resultsEl.textContent = '検索に失敗しました: ' + err;
+      resultsWrap.classList.add('active');
+    }
+  });
+
+  clearBtn.addEventListener('click', clearSearch);
+
 })();
 </script>
 </body></html>
@@ -1861,13 +1992,28 @@ def gallery():
     sort = request.args.get("sort", "new")
     sort_reverse = sort != "old"
 
+    # 月フィルタ (デフォルト: 当月)
+    now = datetime.now()
+    try:
+        year = int(request.args.get("year", now.year))
+        month = int(request.args.get("month", now.month))
+        if not (1 <= month <= 12):
+            year, month = now.year, now.month
+    except (ValueError, TypeError):
+        year, month = now.year, now.month
+
+    prev_year, prev_month = (year - 1, 12) if month == 1 else (year, month - 1)
+    next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
+    month_prefix = f"{year:04d}-{month:02d}"
+
     save_path = Path(_SAVE_PATH)
     if not save_path.exists():
         date_data = []
     else:
         date_dirs = sorted(
             [d for d in save_path.iterdir()
-             if d.is_dir() and re.match(r"^\d{4}-\d{2}-\d{2}$", d.name)],
+             if d.is_dir() and re.match(r"^\d{4}-\d{2}-\d{2}$", d.name)
+             and d.name.startswith(month_prefix)],
             reverse=sort_reverse,
         )
         date_data = []
@@ -1888,7 +2034,13 @@ def gallery():
                 date_data.append({"name": d.name, "count": count, "files": file_data, "preloaded": True})
             else:
                 date_data.append({"name": d.name, "count": count, "files": [], "preloaded": False})
-    return render_template_string(_GALLERY_INDEX_HTML, dates=date_data, sort=sort)
+    return render_template_string(
+        _GALLERY_INDEX_HTML, dates=date_data, sort=sort,
+        year=year, month=month,
+        prev_year=prev_year, prev_month=prev_month,
+        next_year=next_year, next_month=next_month,
+        now_year=now.year, now_month=now.month,
+    )
 
 
 @app.route("/gallery/<date_str>")
@@ -2007,7 +2159,10 @@ def delete_media():
 @app.route("/gallery/search")
 def gallery_search():
     q = request.args.get("q", "").strip().lower()
+    fragment = request.args.get("fragment", "0") == "1"
     if not q:
+        if fragment:
+            return "", 200
         return redirect("/gallery")
     save_path = Path(_SAVE_PATH)
     files = []
@@ -2022,7 +2177,32 @@ def gallery_search():
                         "type": _media_type(f.name),
                         "path": f"{date_dir.name}/{f.name}",
                     })
+    if fragment:
+        return render_template_string(_THUMBS_FRAGMENT_HTML, files=files)
     return render_template_string(_GALLERY_DATE_HTML, date=f"🔍 {q}", files=files)
+
+
+@app.route("/api/gallery/calendar")
+def api_gallery_calendar():
+    """指定年月のファイル数を日付ごとに返す。 {"YYYY-MM-DD": count, ...}"""
+    now = datetime.now()
+    try:
+        year = int(request.args.get("year", now.year))
+        month = int(request.args.get("month", now.month))
+        if not (1 <= month <= 12):
+            return jsonify({"error": "invalid month"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "invalid year/month"}), 400
+    month_prefix = f"{year:04d}-{month:02d}"
+    save_path = Path(_SAVE_PATH)
+    counts = {}
+    if save_path.exists():
+        for date_dir in save_path.iterdir():
+            if date_dir.is_dir() and date_dir.name.startswith(month_prefix):
+                count = sum(1 for f in date_dir.iterdir() if f.is_file())
+                if count > 0:
+                    counts[date_dir.name] = count
+    return jsonify(counts)
 
 
 @app.route("/logs")
