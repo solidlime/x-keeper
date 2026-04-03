@@ -47,7 +47,6 @@ app.*.map.json
 # build_apk.bat が自動ダウンロード・生成するもの
 /flutter/
 /android-sdk/
-/assets/
 
 # flutter pub get / flutter_launcher_icons が生成するもの
 .flutter-plugins
