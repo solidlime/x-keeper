@@ -6,28 +6,22 @@ Chrome 拡張・Android アプリから直接 URL を投入する。
 
 import asyncio
 import logging
-import re
 import sys
 import threading
 
 from .config import Settings
 from .image_downloader import MediaDownloader
 from .log_store import LogStore
+from .patterns import IMGUR_URL_PATTERN, PIXIV_URL_PATTERN, X_MEDIA_PAGE_PATTERN
 from . import web_setup as _web_setup_module
 from .web_setup import app as _setup_app
 
 logger = logging.getLogger(__name__)
 
-# URL パターン
-_X_MEDIA_PAGE_PATTERN = re.compile(
-    r"https?://(?:twitter\.com|x\.com)/[A-Za-z0-9_]+/media\b"
-)
-_PIXIV_URL_PATTERN = re.compile(
-    r"https?://(?:www\.)?pixiv\.net/(?:en/)?artworks/\d+"
-)
-_IMGUR_URL_PATTERN = re.compile(
-    r"https?://(?:i\.)?imgur\.com/[A-Za-z0-9/_\-.]+"
-)
+# URL パターンは src/patterns.py で一元管理
+_X_MEDIA_PAGE_PATTERN = X_MEDIA_PAGE_PATTERN
+_PIXIV_URL_PATTERN = PIXIV_URL_PATTERN
+_IMGUR_URL_PATTERN = IMGUR_URL_PATTERN
 
 
 def _reconfigure_stdout_encoding() -> None:

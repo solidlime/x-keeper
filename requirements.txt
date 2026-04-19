@@ -10,3 +10,7 @@ flask>=3.0.0
 python-dotenv>=1.0.0
 # サムネイル生成
 Pillow>=10.0.0
+
+# テスト
+pytest>=8.0.0
+pytest-mock>=3.14.0

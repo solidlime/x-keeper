@@ -6,7 +6,6 @@ Twitter API キーは不要。
 
 import logging
 import os
-import re
 import subprocess
 import tempfile
 from datetime import date
@@ -14,6 +13,7 @@ from pathlib import Path
 
 from .log_store import LogStore
 from .models import DownloadResult, SavedFile
+from .patterns import TWEET_ID_FROM_FILENAME, TWEET_ID_FROM_URL
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +30,9 @@ _USER_MEDIA_TIMEOUT = 7200
 # 例: AIUnajyu-2022329732306772314-01.jpg
 _TWITTER_FILENAME_TEMPLATE = "{author[name]}-{tweet_id}-{num:02d}.{extension}"
 
-# ファイル名から tweet_id を抽出するパターン (10〜20桁: 2010年代以降のツイートに対応)
-_TWEET_ID_FROM_URL = re.compile(r"/status/(\d+)")
-_TWEET_ID_FROM_FILENAME = re.compile(r"-(\d{10,20})-\d{2}\.\w+$")
+# URL パターンは src/patterns.py で一元管理
+_TWEET_ID_FROM_URL = TWEET_ID_FROM_URL
+_TWEET_ID_FROM_FILENAME = TWEET_ID_FROM_FILENAME
 
 
 class MediaDownloader:

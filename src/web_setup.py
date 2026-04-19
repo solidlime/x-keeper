@@ -13,7 +13,6 @@ import hashlib
 import json
 import os
 import queue as _queue_module
-import re
 import secrets
 import urllib.error
 import urllib.parse
@@ -22,6 +21,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Flask, Response, jsonify, redirect, render_template_string, request, send_from_directory, session, stream_with_context
+
+from .patterns import API_URL_PATTERN as _API_URL_PATTERN, TWEET_ID_RE as _TWEET_ID_RE
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(32)
@@ -64,17 +65,6 @@ def _cors_preflight():
     return response
 
 
-# X/Pixiv/Imgur URL を受け付けるパターン
-_API_URL_PATTERN = re.compile(
-    r"https?://(?:"
-    r"(?:twitter\.com|x\.com)/[A-Za-z0-9_]+/(?:status/\d+|media)"
-    r"|(?:www\.)?pixiv\.net/(?:en/)?artworks/\d+"
-    r"|(?:i\.)?imgur\.com/[A-Za-z0-9/_\-.]+"
-    r")"
-)
-
-# tweet_id として有効な桁数 (10〜20 桁)
-_TWEET_ID_RE = re.compile(r"^\d{10,20}$")
 
 # サムネイルキャッシュの設定
 _THUMBS_DIR = "_thumbs"           # {SAVE_PATH}/_thumbs/ 以下にキャッシュを保存する
