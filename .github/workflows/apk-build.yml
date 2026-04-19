@@ -47,6 +47,18 @@ jobs:
           path: client/flutter_app/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 30
 
+      - name: Package Chrome extension ZIP
+        run: |
+          cd client/chrome_extension
+          zip -r ../../x-keeper-chrome-ext.zip .
+
+      - name: Upload Chrome extension artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: xkeeper-chrome-ext
+          path: x-keeper-chrome-ext.zip
+          retention-days: 30
+
       - name: Write job summary
         if: always()
         env:
@@ -62,11 +74,13 @@ jobs:
             echo "| APK | \`client/flutter_app/build/app/outputs/flutter-apk/app-release.apk\` |"
           } >> $GITHUB_STEP_SUMMARY
 
-      # タグ push 時のみ GitHub Release を作成して APK を添付する
+      # タグ push 時のみ GitHub Release を作成して APK と Chrome 拡張 ZIP を添付する
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2.6.1
         with:
-          files: client/flutter_app/build/app/outputs/flutter-apk/app-release.apk
+          files: |
+            client/flutter_app/build/app/outputs/flutter-apk/app-release.apk
+            x-keeper-chrome-ext.zip
           generate_release_notes: true
 
