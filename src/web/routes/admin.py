@@ -1,9 +1,9 @@
-"""管理ページルート (/logs, /queue, /failures)。"""
+"""管理ページルート (/logs, /queue, /failures, /stats)。"""
 
 from flask import Blueprint, redirect, render_template_string
 
 from ..globals import get_log_store
-from ..templates import _FAILURES_HTML, _LOGS_HTML, _QUEUE_HTML
+from ..templates import _FAILURES_HTML, _LOGS_HTML, _QUEUE_HTML, _STATS_HTML
 
 bp_admin = Blueprint("bp_admin", __name__)
 
@@ -30,3 +30,8 @@ def queue_page():
 @bp_admin.route("/failures")
 def failures():
     return redirect("/queue")
+
+
+@bp_admin.route("/stats")
+def stats():
+    return render_template_string(_STATS_HTML)

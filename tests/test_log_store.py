@@ -1,6 +1,6 @@
 """src/log_store.py のテスト。"""
 
-import json
+import sqlite3
 
 
 class TestAppendAndGetLogs:
@@ -119,3 +119,47 @@ class TestDownloadedUrls:
         log_store.mark_downloaded_url("https://pixiv.net/artworks/1")
         log_store.mark_downloaded_url("https://pixiv.net/artworks/2")
         assert log_store.count_downloaded_urls() == 2
+
+
+class TestGetStorageStats:
+    def test_returns_expected_keys(self, log_store):
+        stats = log_store.get_storage_stats()
+        for key in ("total_success", "total_failure", "total_downloaded_ids",
+                    "total_downloaded_urls", "total_files", "total_size_bytes",
+                    "files_per_day", "by_ext"):
+            assert key in stats, f"missing key: {key}"
+
+    def test_counts_success_and_failure(self, log_store):
+        log_store.append_success(["https://x.com/u/status/1"], 2)
+        log_store.append_success(["https://x.com/u/status/2"], 1)
+        log_store.append_failure(["https://x.com/u/status/3"], "err")
+        stats = log_store.get_storage_stats()
+        assert stats["total_success"] == 2
+        assert stats["total_failure"] == 1
+
+    def test_counts_downloaded_ids(self, log_store):
+        log_store.mark_downloaded(["111", "222", "333"])
+        stats = log_store.get_storage_stats()
+        assert stats["total_downloaded_ids"] == 3
+
+    def test_counts_media_files(self, log_store, tmp_path):
+        """日付フォルダ内のメディアファイルが集計されること。"""
+        day_dir = tmp_path / "2025-01-01"
+        day_dir.mkdir()
+        (day_dir / "file1.jpg").write_bytes(b"x" * 1024)
+        (day_dir / "file2.mp4").write_bytes(b"x" * 2048)
+        (day_dir / "skip.txt").write_bytes(b"x" * 100)  # 対象外
+        stats = log_store.get_storage_stats()
+        assert stats["total_files"] == 2
+        assert stats["total_size_bytes"] == 1024 + 2048
+
+    def test_files_per_day_structure(self, log_store, tmp_path):
+        day_dir = tmp_path / "2025-06-15"
+        day_dir.mkdir()
+        (day_dir / "a.png").write_bytes(b"x" * 512)
+        stats = log_store.get_storage_stats()
+        dates = [x["date"] for x in stats["files_per_day"]]
+        assert "2025-06-15" in dates
+        entry = next(x for x in stats["files_per_day"] if x["date"] == "2025-06-15")
+        assert entry["count"] == 1
+        assert entry["size_bytes"] == 512

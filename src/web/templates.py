@@ -33,6 +33,7 @@ _BASE_STYLE = """
     <div class="navbar-nav flex-row gap-3">
       <a class="nav-link" href="/?setup=1">セットアップ</a>
       <a class="nav-link" href="/gallery">ギャラリー</a>
+      <a class="nav-link" href="/stats">統計</a>
       <a class="nav-link" href="/logs">ログ</a>
       <a class="nav-link" href="/queue">キュー</a>
     </div>
@@ -1819,6 +1820,168 @@ _FAILURES_HTML = (
   </div>
   {% endif %}
 </div>
+</body></html>
+"""
+)
+
+_STATS_HTML = (
+    _BASE_STYLE
+    + """
+<div class="container-fluid px-4" style="max-width:960px">
+  <div class="d-flex align-items-center mb-4">
+    <h4 class="mb-0 me-3">&#128202; ストレージ統計</h4>
+    <button class="btn btn-sm btn-outline-secondary" id="btn-refresh" onclick="loadStats()">更新</button>
+  </div>
+
+  <!-- サマリーカード -->
+  <div class="row g-3 mb-4" id="summary-cards">
+    <div class="col-6 col-md-3">
+      <div class="card text-center p-3 h-100">
+        <div class="fs-2 fw-bold text-primary" id="stat-files">—</div>
+        <div class="small text-muted">総ファイル数</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card text-center p-3 h-100">
+        <div class="fs-2 fw-bold text-info" id="stat-size">—</div>
+        <div class="small text-muted">合計サイズ</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card text-center p-3 h-100">
+        <div class="fs-2 fw-bold text-success" id="stat-success">—</div>
+        <div class="small text-muted">成功ダウンロード</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card text-center p-3 h-100">
+        <div class="fs-2 fw-bold text-danger" id="stat-failure">—</div>
+        <div class="small text-muted">失敗ダウンロード</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card text-center p-3 h-100">
+        <div class="fs-2 fw-bold text-secondary" id="stat-ids">—</div>
+        <div class="small text-muted">記録済み tweet ID</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card text-center p-3 h-100">
+        <div class="fs-2 fw-bold text-secondary" id="stat-urls">—</div>
+        <div class="small text-muted">記録済み URL</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- チャート行 -->
+  <div class="row g-4 mb-4">
+    <div class="col-md-8">
+      <div class="card p-3 h-100">
+        <h6 class="card-title mb-3">日別ファイル数 (直近30日)</h6>
+        <canvas id="chart-per-day" height="220"></canvas>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card p-3 h-100">
+        <h6 class="card-title mb-3">拡張子別ファイル数</h6>
+        <canvas id="chart-by-ext" height="220"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"
+        crossorigin="anonymous"></script>
+<script>
+let chartPerDay = null;
+let chartByExt  = null;
+
+function fmt_bytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1024 ** 2) return (b / 1024).toFixed(1) + ' KB';
+  if (b < 1024 ** 3) return (b / 1024 ** 2).toFixed(1) + ' MB';
+  return (b / 1024 ** 3).toFixed(2) + ' GB';
+}
+
+async function loadStats() {
+  document.getElementById('btn-refresh').disabled = true;
+  try {
+    const resp = await fetch('/api/stats');
+    const d    = await resp.json();
+
+    document.getElementById('stat-files').textContent   = (d.total_files ?? 0).toLocaleString();
+    document.getElementById('stat-size').textContent    = fmt_bytes(d.total_size_bytes ?? 0);
+    document.getElementById('stat-success').textContent = (d.total_success ?? 0).toLocaleString();
+    document.getElementById('stat-failure').textContent = (d.total_failure ?? 0).toLocaleString();
+    document.getElementById('stat-ids').textContent     = (d.total_downloaded_ids ?? 0).toLocaleString();
+    document.getElementById('stat-urls').textContent    = (d.total_downloaded_urls ?? 0).toLocaleString();
+
+    const perDay  = (d.files_per_day ?? []).slice(-30);
+    const labels  = perDay.map(x => x.date);
+    const counts  = perDay.map(x => x.count);
+    const sizes   = perDay.map(x => x.size_bytes);
+
+    if (chartPerDay) chartPerDay.destroy();
+    chartPerDay = new Chart(document.getElementById('chart-per-day'), {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'ファイル数',
+          data: counts,
+          backgroundColor: 'rgba(13, 110, 253, 0.7)',
+          yAxisID: 'y',
+        }, {
+          label: 'サイズ (MB)',
+          data: sizes.map(s => +(s / 1024 / 1024).toFixed(2)),
+          type: 'line',
+          borderColor: 'rgba(25, 135, 84, 0.9)',
+          backgroundColor: 'transparent',
+          yAxisID: 'y2',
+          tension: 0.3,
+        }],
+      },
+      options: {
+        responsive: true,
+        interaction: { mode: 'index' },
+        scales: {
+          x:  { ticks: { maxRotation: 45, font: { size: 10 } } },
+          y:  { beginAtZero: true, title: { display: true, text: 'ファイル数' } },
+          y2: { beginAtZero: true, position: 'right', title: { display: true, text: 'MB' },
+                grid: { drawOnChartArea: false } },
+        },
+      },
+    });
+
+    const byExt = d.by_ext ?? {};
+    const extLabels = Object.keys(byExt).sort((a, b) => byExt[b] - byExt[a]);
+    const extCounts = extLabels.map(k => byExt[k]);
+    const palette = [
+      '#0d6efd','#198754','#dc3545','#ffc107','#0dcaf0',
+      '#6610f2','#fd7e14','#20c997','#6c757d','#d63384',
+    ];
+
+    if (chartByExt) chartByExt.destroy();
+    chartByExt = new Chart(document.getElementById('chart-by-ext'), {
+      type: 'doughnut',
+      data: {
+        labels: extLabels,
+        datasets: [{ data: extCounts, backgroundColor: palette }],
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } },
+      },
+    });
+  } catch (e) {
+    console.error('stats load error', e);
+  } finally {
+    document.getElementById('btn-refresh').disabled = false;
+  }
+}
+
+loadStats();
+</script>
 </body></html>
 """
 )
