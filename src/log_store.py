@@ -359,9 +359,14 @@ class LogStore:
 
         # ログ集計
         with self._lock:
-            logs = self._read(self._log_file)
-        total_success = sum(1 for e in logs if e.get("status") == "success")
-        total_failure = sum(1 for e in logs if e.get("status") == "failure")
+            row = self._conn.execute(
+                "SELECT "
+                "  SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) AS s, "
+                "  SUM(CASE WHEN status='failure' THEN 1 ELSE 0 END) AS f "
+                "FROM download_log"
+            ).fetchone()
+        total_success = row[0] or 0
+        total_failure = row[1] or 0
 
         # tweet ID / URL カウント
         total_ids = len(self.get_downloaded_ids())

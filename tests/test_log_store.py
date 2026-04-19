@@ -62,10 +62,12 @@ class TestMarkDownloaded:
 
     def test_persists_to_disk(self, log_store, tmp_path):
         log_store.mark_downloaded(["999"])
-        ids_file = tmp_path / "_downloaded_ids.json"
-        assert ids_file.exists()
-        data = json.loads(ids_file.read_text())
-        assert "999" in data
+        db_file = tmp_path / "xkeeper.db"
+        assert db_file.exists()
+        conn = sqlite3.connect(str(db_file))
+        rows = conn.execute("SELECT tweet_id FROM downloaded_ids").fetchall()
+        conn.close()
+        assert any(r[0] == "999" for r in rows)
 
 
 class TestApiQueue:

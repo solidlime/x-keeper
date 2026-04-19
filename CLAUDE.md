@@ -53,11 +53,19 @@ python -m src.main
 | `src/main.py` | エントリーポイント・asyncio ループ・Flask デーモン起動 |
 | `src/config.py` | `pydantic-settings` による設定クラス (`Settings`) |
 | `src/models.py` | データクラス: `TweetThread`, `SavedFile`, `DownloadResult` |
-| `src/discord_bot.py` | Discord Bot。チャンネル監視・メッセージ処理・リアクション管理・リトライ |
-| `src/twitter_client.py` | `gallery-dl --dump-json` でスレッドを遡り `TweetThread` を返す |
-| `src/image_downloader.py` | `gallery-dl -D` でメディアをダウンロードし `list[SavedFile]` を返す |
-| `src/log_store.py` | JSON 永続化ログ。成功/失敗記録・リトライキュー管理 |
-| `src/web_setup.py` | Flask アプリ。セットアップ UI・ギャラリー・ログ・失敗管理 |
+| `src/patterns.py` | URL 正規表現を一元管理 (X / Pixiv / Imgur / YT_DLP) |
+| `src/image_downloader.py` | `gallery-dl` / `yt-dlp` でメディアをダウンロードし `list[SavedFile]` を返す |
+| `src/log_store.py` | JSON 永続化ログ。成功/失敗記録・リトライキュー管理・ストレージ統計 |
+| `src/web_setup.py` | `src/web/` パッケージへの薄いシム (後方互換) |
+| `src/web/__init__.py` | Flask app + CORS + Blueprint 登録 |
+| `src/web/globals.py` | `_log_store` グローバル管理 |
+| `src/web/utils.py` | 定数 + ユーティリティ関数 |
+| `src/web/templates.py` | 全 HTML テンプレート文字列 |
+| `src/web/routes/setup.py` | セットアップ UI (`/`, `/save-*`, `/pixiv-oauth/*`) |
+| `src/web/routes/gallery.py` | ギャラリー (`/gallery/*`) |
+| `src/web/routes/api.py` | REST API (`/api/*`) |
+| `src/web/routes/media.py` | メディア配信 (`/media/*`) |
+| `src/web/routes/admin.py` | 管理ページ (`/logs`, `/queue`, `/failures`, `/stats`) |
 
 ### 環境変数 / .env
 
@@ -90,6 +98,7 @@ python -m src.main
 - **X ユーザーメディア欄**: URL パターン `twitter.com|x.com/*/media`。ユーザーの全メディアを一括ダウンロード
 - **Pixiv**: URL パターン `pixiv.net/*/artworks/*`。`PIXIV_REFRESH_TOKEN` が必要
 - **Imgur**: URL パターン `imgur.com/*`（アルバム・ギャラリー・単体画像・i.imgur.com 直リンク）
+- **YouTube / TikTok / NicoNico**: `yt-dlp` で動画をダウンロード (F1)。`YT_DLP_URL_PATTERN` が一致した URL を自動検出
 
 **gallery-dl の使い方 (2 フェーズ)**:
 - フェーズ 1 (`TwitterClient`): `--dump-json` でメタデータのみ取得し `reply_id` を解析してスレッドを遡る
