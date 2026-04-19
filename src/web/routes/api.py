@@ -16,26 +16,33 @@ bp_api = Blueprint("bp_api", __name__)
 
 @bp_api.route("/api/update", methods=["POST", "OPTIONS"])
 def api_update():
-    """gallery-dl を最新バージョンに更新する。"""
+    """gallery-dl と yt-dlp を最新バージョンに更新する。"""
     if request.method == "OPTIONS":
         return _cors_preflight()
     import subprocess
     import re as _re
     try:
         result = subprocess.run(
-            ["pip", "install", "--upgrade", "gallery-dl"],
+            ["pip", "install", "--upgrade", "gallery-dl", "yt-dlp"],
             capture_output=True,
             text=True,
             timeout=120,
         )
         output = result.stdout + result.stderr
-        match = _re.search(r"Successfully installed gallery-dl-([\d.]+)", output)
-        version = match.group(1) if match else None
+        gdl_match = _re.search(r"Successfully installed .*?gallery-dl-([\d.]+)", output)
+        ytdlp_match = _re.search(r"Successfully installed .*?yt-dlp-([\d.]+)", output)
         already = "already up-to-date" in output.lower() or "already satisfied" in output.lower()
+        versions = {}
+        if gdl_match:
+            versions["gallery_dl"] = gdl_match.group(1)
+        if ytdlp_match:
+            versions["yt_dlp"] = ytdlp_match.group(1)
         return jsonify({
             "ok": result.returncode == 0,
-            "version": version,
-            "already_up_to_date": already,
+            "versions": versions,
+            # 後方互換: 単一バージョンフィールドは gallery-dl を優先
+            "version": gdl_match.group(1) if gdl_match else None,
+            "already_up_to_date": already and not versions,
             "output": output[-2000:],
         })
     except subprocess.TimeoutExpired:

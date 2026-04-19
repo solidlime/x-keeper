@@ -217,9 +217,9 @@ _INDEX_HTML = (
 
     <hr class="my-4">
     <h6 class="fw-bold">パッケージ更新</h6>
-    <p class="small text-muted mb-3">gallery-dl を最新バージョンに更新します。</p>
+    <p class="small text-muted mb-3">gallery-dl / yt-dlp を最新バージョンに更新します。</p>
     <button type="button" class="btn btn-outline-secondary" onclick="updatePackages(this)">
-      gallery-dl を更新する
+      gallery-dl / yt-dlp を更新する
     </button>
     <div id="update-result" class="mt-2 small"></div>
     <script>
@@ -232,8 +232,11 @@ _INDEX_HTML = (
         const data = await res.json();
         if (data.already_up_to_date) {
           document.getElementById('update-result').innerHTML = '<span class="text-success">最新バージョンです</span>';
-        } else if (data.version) {
-          document.getElementById('update-result').innerHTML = `<span class="text-success">gallery-dl ${data.version} に更新しました</span>`;
+        } else if (data.versions && Object.keys(data.versions).length > 0) {
+          const parts = [];
+          if (data.versions.gallery_dl) parts.push(`gallery-dl ${data.versions.gallery_dl}`);
+          if (data.versions.yt_dlp)     parts.push(`yt-dlp ${data.versions.yt_dlp}`);
+          document.getElementById('update-result').innerHTML = `<span class="text-success">${parts.join(' / ')} に更新しました</span>`;
         } else if (!data.ok) {
           document.getElementById('update-result').innerHTML = `<span class="text-danger">エラー: ${data.error || data.output}</span>`;
         } else {
@@ -242,7 +245,7 @@ _INDEX_HTML = (
       } catch (e) {
         document.getElementById('update-result').innerHTML = `<span class="text-danger">通信エラー: ${e}</span>`;
       } finally {
-        btn.textContent = 'gallery-dl を更新する';
+        btn.textContent = 'gallery-dl / yt-dlp を更新する';
         btn.disabled = false;
       }
     }
