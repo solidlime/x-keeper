@@ -144,6 +144,8 @@ python -m src.main
 | `GET /api/history/ids` | ダウンロード済み tweet ID の全リストを返す (Chrome 拡張バッジ用) |
 | `GET /api/history/urls/count` | ダウンロード済み URL (Pixiv/Imgur 等) の総件数を返す `{"count": N}` |
 | `GET /api/history/urls` | ダウンロード済み URL の全リストを返す (Chrome 拡張バッジ用) |
+| `GET /api/stats` | ストレージ統計 (ファイル数・サイズ・日別・拡張子別) を返す |
+| `GET /stats` | ストレージ統計ダッシュボード (Chart.js) |
 | `GET /queue` | API キューの管理ページ (処理待ちキュー一覧・全件削除) |
 
 **ギャラリー** (`/gallery`):
@@ -156,14 +158,15 @@ python -m src.main
 - イベント委譲により動的読み込みコンテンツにも削除・ライトボックスが動作
 
 **LogStore** (`src/log_store.py`):
-- `{SAVE_PATH}/_download_log.json` に JSON 形式で保存 (最大 500 件)
-- `{SAVE_PATH}/_retry_queue.json` にリトライキューを保存
-- `{SAVE_PATH}/_downloaded_ids.json` にダウンロード済み tweet ID のリストを保存 (重複防止用)
-- `{SAVE_PATH}/_api_queue.json` に Chrome 拡張 / Android アプリから投入された URL キューを保存
-- スレッドセーフ (`threading.Lock` 使用)
+- `{SAVE_PATH}/xkeeper.db` (SQLite) に永続化。外部依存ゼロ (標準ライブラリ `sqlite3` のみ)
+- テーブル: `download_log` / `downloaded_ids` / `downloaded_urls` / `api_queue`
+- 初回起動時に `CREATE TABLE IF NOT EXISTS` で自動作成
+- 旧 JSON ファイル (`_download_log.json` 等) がある場合、起動時に自動マイグレーションして `.json.bak` にリネーム
+- スレッドセーフ (`threading.Lock` + `check_same_thread=False`)
+- `get_storage_stats()` で日別・拡張子別のファイル統計を取得可能
 
 **重複ダウンロード防止**:
-- `download_all()` は各ツイート URL の tweet_id を `_downloaded_ids.json` と照合し、既取得のものをスキップする
+- `download_all()` は各ツイート URL の tweet_id を SQLite `downloaded_ids` テーブルと照合し、既取得のものをスキップする
 - `download_user_media()` は gallery-dl の `--filter` オプションで既取得 tweet_id を除外する
   - 除外リストはテンポラリファイル経由で渡す (コマンドライン長制限を回避)
 - ファイル名テンプレート `{author[name]}-{tweet_id}-{num:02d}.{ext}` から tweet_id を逆引きして自動登録する
