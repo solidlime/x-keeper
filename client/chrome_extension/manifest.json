@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "x-keeper Client",
-  "version": "1.2.3",
-  "description": "X (Twitter) / Pixiv のメディアを x-keeper サーバーに送信してダウンロードする",
+  "version": "1.3.0",
+  "description": "X / Pixiv / YouTube / TikTok / NicoNico のメディアを x-keeper サーバーに送信してダウンロードする",
 
   "permissions": [
     "storage",
@@ -30,7 +30,10 @@
       "matches": [
         "https://x.com/*",
         "https://twitter.com/*",
-        "https://www.pixiv.net/*"
+        "https://www.pixiv.net/*",
+        "https://www.youtube.com/*",
+        "https://www.tiktok.com/*",
+        "https://www.nicovideo.jp/*"
       ],
       "js": ["content_scripts/content.js"],
       "run_at": "document_idle"

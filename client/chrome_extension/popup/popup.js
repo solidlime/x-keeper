@@ -6,6 +6,7 @@ const $serverUrl        = document.getElementById('server-url');
 const $btnTest          = document.getElementById('btn-test');
 const $btnSave          = document.getElementById('btn-save');
 const $btnGallery       = document.getElementById('btn-gallery');
+const $btnStats         = document.getElementById('btn-stats');
 const $statusBadge      = document.getElementById('status-badge');
 const $queueSection     = document.getElementById('queue-section');
 const $queueList        = document.getElementById('queue-list');
@@ -404,6 +405,12 @@ $btnGallery.addEventListener('click', async () => {
   const res = await send({ type: 'GET_STATUS' });
   const base = (res.ok && res.serverUrl) ? res.serverUrl : 'http://localhost:8989';
   chrome.tabs.create({ url: `${base}/gallery` });
+});
+
+$btnStats.addEventListener('click', async () => {
+  const res = await send({ type: 'GET_STATUS' });
+  const base = (res.ok && res.serverUrl) ? res.serverUrl : 'http://localhost:8989';
+  chrome.tabs.create({ url: `${base}/stats` });
 });
 
 // ── オフラインキュー ──────────────────────────────────────────────────────────

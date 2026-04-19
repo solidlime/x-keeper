@@ -780,6 +780,60 @@ function setupPixiv() {
   onPixivNavigate();
 }
 
+// ── YouTube / TikTok / NicoNico ──────────────────────────────────────────────
+
+/**
+ * URL-agnostic ビデオページ用フローティングボタン共通ロジック。
+ * getUrl() が null を返す場合はボタンを非表示にする。
+ */
+function setupVideoPage(getUrl, btnColor) {
+  function update() {
+    removeFloatingBtn();
+    const url = getUrl();
+    if (!url) return;
+    if (_downloadedUrls.has(url)) {
+      setFloatingBtn('ダウンロード済み ✓', '#00ba7c', () => {});
+    } else if (_queuedUrls.has(url)) {
+      setFloatingBtn('キュー済み …', '#1d9bf0', (btn) => queueUrl(url, btn, null));
+    } else {
+      setFloatingBtn('x-keeper で保存', btnColor, (btn) => queueUrl(url, btn, null));
+    }
+  }
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === 'NAVIGATE') setTimeout(update, 80);
+    if (msg.type === 'URLS_UPDATED') {
+      _downloadedUrls = new Set(msg.urls);
+      for (const url of _downloadedUrls) _queuedUrls.delete(url);
+      saveQueuedUrls();
+      update();
+    }
+  });
+  window.addEventListener('popstate', update);
+  update();
+}
+
+function setupYouTube() {
+  setupVideoPage(() => {
+    if (location.pathname !== '/watch') return null;
+    const v = new URLSearchParams(location.search).get('v');
+    return v ? `https://www.youtube.com/watch?v=${v}` : null;
+  }, '#cc0000');
+}
+
+function setupTikTok() {
+  setupVideoPage(() => {
+    return location.pathname.match(/^\/@[^/]+\/video\/\d+/)
+      ? location.href.split('?')[0] : null;
+  }, '#010101');
+}
+
+function setupNicoNico() {
+  setupVideoPage(() => {
+    return location.pathname.match(/^\/watch\/(?:sm|nm|so)?\d+/)
+      ? location.href.split('?')[0] : null;
+  }, '#e0404c');
+}
+
 // ── 初期化 ────────────────────────────────────────────────────────────────────
 
 (async function init() {
@@ -797,5 +851,14 @@ function setupPixiv() {
     // ダウンロード済み URL を Service Worker 経由で取得してからボタン表示
     loadDownloadedUrls();
     setupPixiv();
+  } else if (host === 'www.youtube.com') {
+    loadDownloadedUrls();
+    setupYouTube();
+  } else if (host === 'www.tiktok.com') {
+    loadDownloadedUrls();
+    setupTikTok();
+  } else if (host === 'www.nicovideo.jp') {
+    loadDownloadedUrls();
+    setupNicoNico();
   }
 })();
