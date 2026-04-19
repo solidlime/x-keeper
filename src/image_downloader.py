@@ -211,7 +211,69 @@ class MediaDownloader:
         )
         return saved
 
-    # ── private ─────────────────────────────────────────────────────────────────────
+    def download_yt_dlp(self, url: str) -> list[SavedFile]:
+        """yt-dlp で YouTube / TikTok / NicoNico 等の動画をダウンロードする。
+
+        gallery-dl が対応していない動画サイトを処理する。
+        yt-dlp のデフォルトファイル名テンプレートを使用する。
+
+        Args:
+            url: ダウンロード対象の動画 URL。
+
+        Returns:
+            保存に成功した SavedFile のリスト。空リストの場合はダウンロード失敗またはスキップ。
+        """
+        today = date.today()
+        dest_dir = self._save_root / today.isoformat()
+        _ensure_directory(dest_dir)
+
+        files_before: set[Path] = set(dest_dir.iterdir())
+
+        cmd = [
+            "yt-dlp",
+            "--no-playlist",        # 再生リストは展開せず単体ダウンロード
+            "--no-warnings",        # 警告ログを抑制
+            "-P", str(dest_dir),    # 保存先ディレクトリ
+            url,
+        ]
+        if self._cookies_file:
+            cmd += ["--cookies", self._cookies_file]
+
+        logger.info("yt-dlp ダウンロード開始: url=%s", url)
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=_DOWNLOAD_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"yt-dlp がタイムアウトしました ({_DOWNLOAD_TIMEOUT}s): url={url}"
+            ) from exc
+
+        if result.returncode not in (0, 1):
+            logger.error(
+                "yt-dlp エラー: url=%s, returncode=%d, stderr=%s",
+                url,
+                result.returncode,
+                result.stderr.strip()[-500:],
+            )
+        if result.stderr.strip():
+            logger.debug("yt-dlp stderr: %s", result.stderr.strip()[-500:])
+
+        files_after: set[Path] = set(dest_dir.iterdir())
+        new_files = sorted(files_after - files_before)
+
+        saved = [
+            SavedFile(source_url=url, saved_path=str(p), date_folder=today)
+            for p in new_files
+        ]
+        logger.info("yt-dlp ダウンロード完了: url=%s, 保存ファイル数=%d", url, len(saved))
+        return saved
+
+
 
     def _download_one(
         self, url: str, dest_dir: Path, filename_template: str | None

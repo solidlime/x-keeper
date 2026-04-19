@@ -30,14 +30,45 @@ IMGUR_URL_PATTERN = re.compile(
     r"https?://(?:i\.)?imgur\.com/[A-Za-z0-9/_\-.]+"
 )
 
+# ── yt-dlp 対応サイト ─────────────────────────────────────────────────────────
+
+# YouTube (通常動画・ショート・youtu.be 短縮)
+YOUTUBE_URL_PATTERN = re.compile(
+    r"https?://(?:www\.)?(?:youtube\.com/(?:watch|shorts/[A-Za-z0-9_-]+)|youtu\.be/[A-Za-z0-9_-]+)"
+)
+
+# TikTok (ユーザー投稿動画・短縮リンク)
+TIKTOK_URL_PATTERN = re.compile(
+    r"https?://(?:www\.)?tiktok\.com/(?:@[^/\s]+/video/\d+|t/[A-Za-z0-9]+)"
+)
+
+# NicoNico 動画
+NICOVIDEO_URL_PATTERN = re.compile(
+    r"https?://(?:www\.)?nicovideo\.jp/watch/[A-Za-z0-9]+"
+)
+
+# yt-dlp 対応サイト統合パターン (追加サイトが増えたらここへ追記)
+YT_DLP_URL_PATTERN = re.compile(
+    r"https?://(?:"
+    r"(?:www\.)?youtube\.com/(?:watch|shorts/[A-Za-z0-9_-]+)"
+    r"|youtu\.be/[A-Za-z0-9_-]+"
+    r"|(?:www\.)?tiktok\.com/(?:@[^/\s]+/video/\d+|t/[A-Za-z0-9]+)"
+    r"|(?:www\.)?nicovideo\.jp/watch/[A-Za-z0-9]+"
+    r")"
+)
+
 # ── 複合パターン ──────────────────────────────────────────────────────────────
 
-# X/Pixiv/Imgur URL を受け付ける統合パターン (API キュー・バリデーション用)
+# X/Pixiv/Imgur/yt-dlp URL を受け付ける統合パターン (API キュー・バリデーション用)
 API_URL_PATTERN = re.compile(
     r"https?://(?:"
     r"(?:twitter\.com|x\.com)/[A-Za-z0-9_]+/(?:status/\d+|media)"
     r"|(?:www\.)?pixiv\.net/(?:en/)?artworks/\d+"
     r"|(?:i\.)?imgur\.com/[A-Za-z0-9/_\-.]+"
+    r"|(?:www\.)?youtube\.com/(?:watch|shorts/[A-Za-z0-9_-]+)"
+    r"|youtu\.be/[A-Za-z0-9_-]+"
+    r"|(?:www\.)?tiktok\.com/(?:@[^/\s]+/video/\d+|t/[A-Za-z0-9]+)"
+    r"|(?:www\.)?nicovideo\.jp/watch/[A-Za-z0-9]+"
     r")"
 )
 

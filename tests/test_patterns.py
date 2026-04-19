@@ -11,6 +11,7 @@ from src.patterns import (
     TWEET_ID_RE,
     X_MEDIA_PAGE_PATTERN,
     X_STATUS_URL_PATTERN,
+    YT_DLP_URL_PATTERN,
 )
 
 
@@ -94,7 +95,6 @@ class TestApiUrlPattern:
         assert API_URL_PATTERN.search(url)
 
     @pytest.mark.parametrize("url", [
-        "https://youtube.com/watch?v=abc",
         "https://example.com/",
         "",
     ])
@@ -145,3 +145,24 @@ class TestTweetIdRe:
     ])
     def test_invalid_ids(self, tweet_id):
         assert not TWEET_ID_RE.match(tweet_id)
+
+
+class TestYtDlpUrlPattern:
+    @pytest.mark.parametrize("url", [
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "https://www.youtube.com/shorts/abcde12345A",
+        "https://youtu.be/dQw4w9WgXcQ",
+        "https://www.tiktok.com/@user/video/1234567890123456789",
+        "https://www.tiktok.com/t/ZTRaBcDeF",
+        "https://www.nicovideo.jp/watch/sm12345678",
+    ])
+    def test_matches_valid(self, url):
+        assert YT_DLP_URL_PATTERN.search(url)
+
+    @pytest.mark.parametrize("url", [
+        "https://twitter.com/user/status/123",
+        "https://example.com/video/123",
+        "https://vimeo.com/123456789",
+    ])
+    def test_not_match_invalid(self, url):
+        assert not YT_DLP_URL_PATTERN.search(url)

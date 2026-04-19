@@ -12,7 +12,7 @@ import threading
 from .config import Settings
 from .image_downloader import MediaDownloader
 from .log_store import LogStore
-from .patterns import IMGUR_URL_PATTERN, PIXIV_URL_PATTERN, X_MEDIA_PAGE_PATTERN
+from .patterns import IMGUR_URL_PATTERN, PIXIV_URL_PATTERN, X_MEDIA_PAGE_PATTERN, YT_DLP_URL_PATTERN
 from . import web_setup as _web_setup_module
 from .web_setup import app as _setup_app
 
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 _X_MEDIA_PAGE_PATTERN = X_MEDIA_PAGE_PATTERN
 _PIXIV_URL_PATTERN = PIXIV_URL_PATTERN
 _IMGUR_URL_PATTERN = IMGUR_URL_PATTERN
+_YT_DLP_URL_PATTERN = YT_DLP_URL_PATTERN
 
 
 def _reconfigure_stdout_encoding() -> None:
@@ -65,6 +66,12 @@ async def _download_url_direct(
             logger.info("直接ダウンロード完了: url=%s, files=%d", url, len(saved))
             log_store.append_success([url], len(saved))
             log_store.mark_downloaded_url(url)
+        elif _YT_DLP_URL_PATTERN.search(url):
+            saved = await loop.run_in_executor(
+                None, downloader.download_yt_dlp, url
+            )
+            logger.info("yt-dlp ダウンロード完了: url=%s, files=%d", url, len(saved))
+            log_store.append_success([url], len(saved))
         else:
             result = await loop.run_in_executor(
                 None, downloader.download_all, [url]
