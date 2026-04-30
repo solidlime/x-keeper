@@ -571,8 +571,8 @@ function setFloatingBtn(label, color, onClick) {
     'z-index:2147483646',
     'display:inline-flex',
     'align-items:center',
-    'gap:6px',
-    'padding:10px 16px',
+    'gap:0',
+    'padding:10px',
     'border:none',
     'border-radius:9999px',
     `background:${color}`,
@@ -581,12 +581,33 @@ function setFloatingBtn(label, color, onClick) {
     'font-weight:700',
     'cursor:pointer',
     'box-shadow:0 2px 12px rgba(0,0,0,.4)',
-    'transition:opacity .15s,transform .15s',
+    'transition:opacity .2s,padding .2s,gap .2s',
     'line-height:1',
+    'overflow:hidden',
+    'opacity:0.25',
   ].join(';');
-  btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 16l-5-5 1.4-1.4 2.6 2.6V4h2v8.2l2.6-2.6L17 11l-5 5zm-6 4v-2h12v2H6z"/></svg><span>${label}</span>`;
-  btn.addEventListener('mouseenter', () => { btn.style.opacity = '0.85'; btn.style.transform = 'scale(1.04)'; });
-  btn.addEventListener('mouseleave', () => { btn.style.opacity = '1'; btn.style.transform = ''; });
+
+  const iconSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 16l-5-5 1.4-1.4 2.6 2.6V4h2v8.2l2.6-2.6L17 11l-5 5zm-6 4v-2h12v2H6z"/></svg>';
+  const span = document.createElement('span');
+  span.textContent = label;
+  span.style.cssText = 'max-width:0;overflow:hidden;white-space:nowrap;transition:max-width .2s,opacity .15s;opacity:0';
+  btn.innerHTML = iconSvg;
+  btn.appendChild(span);
+
+  btn.addEventListener('mouseenter', () => {
+    btn.style.opacity = '1';
+    btn.style.padding = '10px 16px';
+    btn.style.gap = '6px';
+    span.style.maxWidth = '200px';
+    span.style.opacity = '1';
+  });
+  btn.addEventListener('mouseleave', () => {
+    btn.style.opacity = '0.25';
+    btn.style.padding = '10px';
+    btn.style.gap = '0';
+    span.style.maxWidth = '0';
+    span.style.opacity = '0';
+  });
   btn.addEventListener('click', (e) => { e.stopPropagation(); onClick(btn); });
   document.body.appendChild(btn);
 }
@@ -861,4 +882,11 @@ function setupNicoNico() {
     loadDownloadedUrls();
     setupNicoNico();
   }
+
+  // フルスクリーン時はFABを完全に非表示にする
+  document.addEventListener('fullscreenchange', () => {
+    const fab = document.getElementById(FAB_ID);
+    if (!fab) return;
+    fab.style.display = document.fullscreenElement ? 'none' : 'inline-flex';
+  });
 })();
