@@ -40,13 +40,6 @@ class Settings(BaseSettings):
     retry_poll_interval: int = 30
     """API キューのポーリング間隔 (秒)。デフォルト: 30"""
 
-    # ── aria2c RPC ────────────────────────────────────────────────────────────
-    aria2_rpc_url: str = "http://localhost:6800/jsonrpc"
-    """aria2c JSON-RPC エンドポイント URL。マグネットリンクの転送先。デフォルト: http://localhost:6800/jsonrpc"""
-
-    aria2_rpc_secret: str | None = None
-    """aria2c RPC 認証トークン (--rpc-secret オプションの値)。不要なら None。"""
-
     # ── ロギング ──────────────────────────────────────────────────────────────
     log_level: str = "INFO"
     """ログレベル。DEBUG / INFO / WARNING / ERROR のいずれか。"""
