@@ -12,7 +12,7 @@ import threading
 from .config import Settings
 from .image_downloader import MediaDownloader
 from .log_store import LogStore
-from .patterns import IMGUR_URL_PATTERN, PIXIV_URL_PATTERN, X_MEDIA_PAGE_PATTERN, YT_DLP_URL_PATTERN
+from .patterns import IMGUR_URL_PATTERN, MAGNET_URL_PATTERN, PIXIV_URL_PATTERN, X_MEDIA_PAGE_PATTERN, YT_DLP_URL_PATTERN
 from . import web_setup as _web_setup_module
 from .web_setup import app as _setup_app
 
@@ -23,6 +23,7 @@ _X_MEDIA_PAGE_PATTERN = X_MEDIA_PAGE_PATTERN
 _PIXIV_URL_PATTERN = PIXIV_URL_PATTERN
 _IMGUR_URL_PATTERN = IMGUR_URL_PATTERN
 _YT_DLP_URL_PATTERN = YT_DLP_URL_PATTERN
+_MAGNET_URL_PATTERN = MAGNET_URL_PATTERN
 
 
 def _reconfigure_stdout_encoding() -> None:
@@ -49,11 +50,24 @@ async def _download_url_direct(
     downloader: MediaDownloader,
     log_store: LogStore,
     loop: asyncio.AbstractEventLoop,
+    settings: Settings | None = None,
 ) -> None:
     """URL を直接ダウンロードしてログに記録する。"""
     logger.info("直接ダウンロード開始: url=%s", url)
     try:
-        if _X_MEDIA_PAGE_PATTERN.search(url):
+        if _MAGNET_URL_PATTERN.match(url):
+            if settings is None:
+                raise RuntimeError("aria2c RPC の設定が取得できません")
+            await loop.run_in_executor(
+                None,
+                downloader.download_magnet,
+                url,
+                settings.aria2_rpc_url,
+                settings.aria2_rpc_secret,
+            )
+            logger.info("マグネットリンクを aria2c に送信しました: url=%s", url)
+            log_store.append_success([url], 0)
+        elif _X_MEDIA_PAGE_PATTERN.search(url):
             saved = await loop.run_in_executor(
                 None, downloader.download_user_media, url
             )
@@ -90,6 +104,7 @@ async def _api_queue_loop(
     downloader: MediaDownloader,
     log_store: LogStore,
     poll_interval: int,
+    settings: Settings,
 ) -> None:
     """API キューを定期的にポーリングしてダウンロードを実行する。"""
     loop = asyncio.get_running_loop()
@@ -100,7 +115,7 @@ async def _api_queue_loop(
         if urls:
             logger.info("API キューを処理: %d 件", len(urls))
             for url in urls:
-                await _download_url_direct(url, downloader, log_store, loop)
+                await _download_url_direct(url, downloader, log_store, loop, settings)
 
 
 async def async_main() -> None:
@@ -133,7 +148,7 @@ async def async_main() -> None:
         log_store,
     )
 
-    await _api_queue_loop(downloader, log_store, settings.retry_poll_interval)
+    await _api_queue_loop(downloader, log_store, settings.retry_poll_interval, settings)
 
 
 def main() -> None:

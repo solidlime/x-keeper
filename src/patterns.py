@@ -57,11 +57,20 @@ YT_DLP_URL_PATTERN = re.compile(
     r")"
 )
 
+# ── マグネットリンク ──────────────────────────────────────────────────────────
+
+# BitTorrent マグネットリンク (aria2c 等で処理)
+MAGNET_URL_PATTERN = re.compile(
+    r"^magnet:\?xt=urn:btih:[a-fA-F0-9]{32,40}"
+)
+
 # ── 複合パターン ──────────────────────────────────────────────────────────────
 
-# X/Pixiv/Imgur/yt-dlp URL を受け付ける統合パターン (API キュー・バリデーション用)
+# X/Pixiv/Imgur/yt-dlp/magnet URL を受け付ける統合パターン (API キュー・バリデーション用)
 API_URL_PATTERN = re.compile(
-    r"https?://(?:"
+    r"(?:"
+    r"magnet:\?xt=urn:btih:[a-fA-F0-9]{32,40}"
+    r"|https?://(?:"
     r"(?:twitter\.com|x\.com)/[A-Za-z0-9_]+/(?:status/\d+|media)"
     r"|(?:www\.)?pixiv\.net/(?:en/)?artworks/\d+"
     r"|(?:i\.)?imgur\.com/[A-Za-z0-9/_\-.]+"
@@ -69,7 +78,7 @@ API_URL_PATTERN = re.compile(
     r"|youtu\.be/[A-Za-z0-9_-]+"
     r"|(?:www\.)?tiktok\.com/(?:@[^/\s]+/video/\d+|t/[A-Za-z0-9]+)"
     r"|(?:www\.)?nicovideo\.jp/watch/[A-Za-z0-9]+"
-    r")"
+    r"))"
 )
 
 # ── tweet_id ──────────────────────────────────────────────────────────────────

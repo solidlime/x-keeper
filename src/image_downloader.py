@@ -4,10 +4,12 @@ gallery-dl を subprocess で呼び出して画像・動画・音声を保存す
 Twitter API キーは不要。
 """
 
+import json
 import logging
 import os
 import subprocess
 import tempfile
+import urllib.request
 from datetime import date
 from pathlib import Path
 
@@ -210,6 +212,53 @@ class MediaDownloader:
             len(saved),
         )
         return saved
+
+    def download_magnet(self, magnet_url: str, rpc_url: str, rpc_secret: str | None) -> None:
+        """マグネットリンクを aria2c JSON-RPC キューに追加する。
+
+        aria2c が起動していて RPC が有効な場合に使う。
+        ``aria2c --enable-rpc`` で起動した aria2c に接続する。
+
+        Args:
+            magnet_url: マグネットリンク (magnet:?xt=urn:btih:...)。
+            rpc_url: aria2c JSON-RPC エンドポイント URL。
+            rpc_secret: RPC 認証トークン (--rpc-secret の値)。不要なら None。
+
+        Raises:
+            RuntimeError: aria2c RPC への接続またはタスク追加に失敗した場合。
+        """
+        params: list = []
+        if rpc_secret:
+            params.append(f"token:{rpc_secret}")
+        params.append([magnet_url])
+
+        payload = json.dumps({
+            "jsonrpc": "2.0",
+            "id": "x-keeper",
+            "method": "aria2.addUri",
+            "params": params,
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            rpc_url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = json.loads(resp.read())
+        except Exception as exc:
+            raise RuntimeError(
+                f"aria2c RPC への接続に失敗しました: rpc_url={rpc_url}, error={exc}"
+            ) from exc
+
+        if "error" in result:
+            raise RuntimeError(
+                f"aria2c RPC エラー: {result['error']}"
+            )
+        gid = result.get("result", "unknown")
+        logger.info("マグネットリンクを aria2c に追加しました: gid=%s, url=%s", gid, magnet_url)
 
     def download_yt_dlp(self, url: str) -> list[SavedFile]:
         """yt-dlp で YouTube / TikTok / NicoNico 等の動画をダウンロードする。
