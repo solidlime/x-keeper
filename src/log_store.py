@@ -287,7 +287,7 @@ class LogStore:
         with self._lock:
             cur = self._conn.execute(
                 "INSERT OR IGNORE INTO downloaded_urls (url, added_at) VALUES (?,?)",
-                (url, datetime.now().isoformat(timespec="seconds")),
+                (url, datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
             )
             if cur.rowcount == 0:
                 return False
@@ -314,7 +314,7 @@ class LogStore:
             self._conn.execute(
                 """INSERT OR IGNORE INTO api_queue (url, queued_at, status, retry_count, last_error, next_retry_at)
                    VALUES (?, ?, 'pending', 0, NULL, NULL)""",
-                (url, datetime.now(timezone.utc).isoformat(timespec="seconds")),
+                (url, datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')),
             )
             self._conn.commit()
 
@@ -382,7 +382,7 @@ class LogStore:
                 return False
             delays = [60, 300, 900]
             delay = delays[min(current_count - 1, len(delays) - 1)]
-            next_at = (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat(timespec="seconds")
+            next_at = (datetime.now(timezone.utc) + timedelta(seconds=delay)).strftime('%Y-%m-%d %H:%M:%S')
             self._conn.execute(
                 """UPDATE api_queue
                    SET status = 'pending', retry_count = ?, last_error = ?, next_retry_at = ?
