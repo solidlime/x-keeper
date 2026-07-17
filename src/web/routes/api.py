@@ -260,6 +260,54 @@ def api_history_import():
     return jsonify({"imported": added})
 
 
+@bp_api.route("/api/downloaded/id/<tweet_id>", methods=["DELETE"])
+def delete_downloaded_id(tweet_id):
+    """ダウンロード済 tweet_id フラグを削除する。"""
+    _log_store = get_log_store()
+    if not _log_store:
+        return jsonify({"error": "log_store not initialized"}), 500
+    removed = _log_store.remove_downloaded_id(tweet_id)
+    return jsonify({"removed": removed, "tweet_id": tweet_id})
+
+
+@bp_api.route("/api/downloaded/url", methods=["DELETE"])
+def delete_downloaded_url():
+    """ダウンロード済 URL フラグを削除する。"""
+    _log_store = get_log_store()
+    if not _log_store:
+        return jsonify({"error": "log_store not initialized"}), 500
+    data = request.get_json(silent=True) or {}
+    url = data.get("url", "")
+    if not url:
+        return jsonify({"error": "url is required"}), 400
+    removed = _log_store.remove_downloaded_url(url)
+    return jsonify({"removed": removed, "url": url})
+
+
+@bp_api.route("/api/downloaded/orphans", methods=["GET"])
+def list_orphaned_ids():
+    """ファイルが実在しないダウンロード済 tweet_id 一覧を返す。"""
+    _log_store = get_log_store()
+    if not _log_store:
+        return jsonify({"error": "log_store not initialized"}), 500
+    orphaned = _log_store.find_orphaned_downloaded_ids()
+    return jsonify({"count": len(orphaned), "orphaned_ids": orphaned[:500]})
+
+
+@bp_api.route("/api/downloaded/orphans", methods=["DELETE"])
+def clean_orphaned_ids():
+    """ファイルが実在しないダウンロード済 tweet_id をすべて削除する。"""
+    _log_store = get_log_store()
+    if not _log_store:
+        return jsonify({"error": "log_store not initialized"}), 500
+    orphaned = _log_store.find_orphaned_downloaded_ids()
+    removed_count = 0
+    for tid in orphaned:
+        if _log_store.remove_downloaded_id(tid):
+            removed_count += 1
+    return jsonify({"removed": removed_count, "total_orphans": len(orphaned)})
+
+
 @bp_api.route("/api/history/stream")
 def api_history_stream():
     """SSE: ダウンロード済み tweet ID をリアルタイムでクライアントにプッシュする。"""
