@@ -105,6 +105,7 @@ class MediaDownloader:
 
         saved: list[SavedFile] = []
         existed_count = 0
+        failed_urls: list[str] = []
         for url in pending:
             new_files, rc_ok = self._download_one(url, dest_dir, _TWITTER_FILENAME_TEMPLATE)
             tid = _tweet_id_from_url(url)
@@ -126,17 +127,27 @@ class MediaDownloader:
                     logger.info(
                         "既存ファイルのためスキップ (mark_downloaded): tweet_id=%s", tid
                     )
+                else:
+                    failed_urls.append(url)
+            elif not tid and not new_files and not rc_ok:
+                failed_urls.append(url)
 
         logger.info(
-            "ダウンロード完了: 対象=%d, 重複スキップ=%d, 既存=%d, 保存ファイル数=%d",
+            "ダウンロード完了: 対象=%d, 重複スキップ=%d, 既存=%d, 失敗=%d, 保存ファイル数=%d",
             len(tweet_urls),
             skipped_count,
             existed_count,
+            len(failed_urls),
             len(saved),
         )
-        return DownloadResult(saved=saved, skipped_count=skipped_count, existed_count=existed_count)
+        return DownloadResult(
+            saved=saved,
+            skipped_count=skipped_count,
+            existed_count=existed_count,
+            failed_urls=failed_urls,
+        )
 
-    def download_direct(self, urls: list[str]) -> list[SavedFile]:
+    def download_direct(self, urls: list[str]) -> DownloadResult:
         """Pixiv など Twitter 以外の URL を直接ダウンロードする。
 
         gallery-dl のデフォルトファイル名を使用する。
@@ -145,15 +156,16 @@ class MediaDownloader:
             urls: ダウンロード対象の URL リスト。
 
         Returns:
-            保存に成功した SavedFile のリスト。
+            DownloadResult: 保存結果 (saved, failed_urls を含む)。
         """
         today = date.today()
         dest_dir = self._save_root / today.isoformat()
         _ensure_directory(dest_dir)
 
         saved: list[SavedFile] = []
+        failed_urls: list[str] = []
         for url in urls:
-            new_files, _ = self._download_one(url, dest_dir, filename_template=None)
+            new_files, rc_ok = self._download_one(url, dest_dir, filename_template=None)
             for path in new_files:
                 saved.append(
                     SavedFile(
@@ -162,13 +174,16 @@ class MediaDownloader:
                         date_folder=today,
                     )
                 )
+            if not new_files and not rc_ok:
+                failed_urls.append(url)
 
         logger.info(
-            "ダウンロード完了: 動作対象URL数=%d, 保存ファイル数=%d",
+            "ダウンロード完了: 動作対象URL数=%d, 保存ファイル数=%d, 失敗=%d",
             len(urls),
             len(saved),
+            len(failed_urls),
         )
-        return saved
+        return DownloadResult(saved=saved, skipped_count=0, existed_count=0, failed_urls=failed_urls)
 
     def download_user_media(self, url: str) -> list[SavedFile]:
         """X ユーザーのメディアタブ URL から全メディアをダウンロードする。
