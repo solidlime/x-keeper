@@ -63,8 +63,9 @@ class LogStore:
         ]:
             try:
                 self._conn.execute(f"ALTER TABLE api_queue ADD COLUMN {col} {col_def}")
-            except sqlite3.OperationalError:
-                pass
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" not in str(e).lower():
+                    raise
         self._conn.commit()
 
     def _migrate_from_json(self) -> None:
