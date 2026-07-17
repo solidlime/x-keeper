@@ -58,8 +58,13 @@ async def _download_url_direct(
                 None, downloader.download_user_media, url
             )
             logger.info("直接ダウンロード完了: url=%s, files=%d", url, len(saved))
-            log_store.append_success([url], len(saved))
-            log_store.remove_api_url(url)
+            if saved:
+                log_store.append_success([url], len(saved))
+                log_store.remove_api_url(url)
+            else:
+                requeued = log_store.requeue_api_url(url, "download_user_media returned 0 files")
+                if not requeued:
+                    log_store.append_failure([url], "retry limit exceeded: 0 files")
         elif _PIXIV_URL_PATTERN.search(url) or _IMGUR_URL_PATTERN.search(url):
             result = await loop.run_in_executor(
                 None, downloader.download_direct, [url]
