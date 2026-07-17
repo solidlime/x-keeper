@@ -20,10 +20,12 @@ def queue_page():
     _log_store = get_log_store()
     queue_items = _log_store.peek_api_queue() if _log_store else []
     failure_entries = _log_store.get_failures() if _log_store else []
+    orphan_count = len(_log_store.find_orphaned_downloaded_ids()) if _log_store else 0
     return render_template_string(
         _QUEUE_HTML,
         queue_items=queue_items,
         failure_entries=failure_entries,
+        orphan_count=orphan_count,
     )
 
 

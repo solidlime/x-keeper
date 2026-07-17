@@ -1778,6 +1778,31 @@ if (btnClearAll) {
   });
 }
 </script>
+
+{# ── 孤児フラグ掃除 ────────────────────────────────────────────── #}
+<div style="margin:24px auto; max-width:960px; padding:16px; border:1px solid #f0c; border-radius:8px;">
+  <h5 style="margin:0 0 .5rem">🧹 ダウンロード済フラグの掃除</h5>
+  <p class="text-muted small mb-2">
+    ファイルが実在しないのにダウンロード済み扱いのフラグ:
+    <strong>{{ orphan_count }}</strong> 件
+  </p>
+  <button id="btn-clean-orphans" class="btn btn-sm btn-outline-danger"
+          {{ 'disabled' if orphan_count == 0 else '' }}>一括削除</button>
+  <span id="orphan-result" class="small ms-2"></span>
+</div>
+
+<script>
+document.getElementById('btn-clean-orphans')?.addEventListener('click', async () => {
+  if (!confirm('孤児フラグ {{ orphan_count }} 件を削除しますか？')) return;
+  const btn = document.getElementById('btn-clean-orphans');
+  btn.disabled = true;
+  const res = await fetch('/api/downloaded/orphans', { method: 'DELETE' });
+  const data = await res.json();
+  document.getElementById('orphan-result').textContent =
+    data.removed + ' 件削除しました。ページを再読み込みしてください。';
+  btn.disabled = false;
+});
+</script>
 </body></html>
 """
 )
