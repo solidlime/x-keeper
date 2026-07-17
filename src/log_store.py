@@ -4,7 +4,7 @@ import json
 import queue
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -45,10 +45,26 @@ class LogStore:
                 added_at    TEXT NOT NULL DEFAULT ''
             );
             CREATE TABLE IF NOT EXISTS api_queue (
-                url         TEXT PRIMARY KEY,
-                queued_at   TEXT NOT NULL
+                url           TEXT PRIMARY KEY,
+                queued_at     TEXT NOT NULL,
+                status        TEXT NOT NULL DEFAULT 'pending',
+                retry_count   INTEGER NOT NULL DEFAULT 0,
+                last_error    TEXT,
+                next_retry_at TEXT
             );
         """)
+        self._conn.commit()
+        # 既存DB互換: 古いテーブルに足りないカラムを ALTER TABLE で追加
+        for col, col_def in [
+            ("status", "TEXT NOT NULL DEFAULT 'pending'"),
+            ("retry_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("last_error", "TEXT"),
+            ("next_retry_at", "TEXT"),
+        ]:
+            try:
+                self._conn.execute(f"ALTER TABLE api_queue ADD COLUMN {col} {col_def}")
+            except sqlite3.OperationalError:
+                pass
         self._conn.commit()
 
     def _migrate_from_json(self) -> None:
@@ -296,8 +312,9 @@ class LogStore:
         """URL を直接ダウンロードキューに追加する。重複 URL は追加しない。"""
         with self._lock:
             self._conn.execute(
-                "INSERT OR IGNORE INTO api_queue (url, queued_at) VALUES (?,?)",
-                (url, datetime.now().isoformat(timespec="seconds")),
+                """INSERT OR IGNORE INTO api_queue (url, queued_at, status, retry_count, last_error, next_retry_at)
+                   VALUES (?, ?, 'pending', 0, NULL, NULL)""",
+                (url, datetime.now(timezone.utc).isoformat(timespec="seconds")),
             )
             self._conn.commit()
 
@@ -305,9 +322,15 @@ class LogStore:
         """直接ダウンロードキューの内容をクリアせずに返す。"""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT url, queued_at FROM api_queue ORDER BY queued_at"
+                "SELECT url, queued_at, status, retry_count, last_error, next_retry_at FROM api_queue ORDER BY queued_at"
             ).fetchall()
-        return [{"url": row[0], "queued_at": row[1]} for row in rows]
+        return [
+            {
+                "url": row[0], "queued_at": row[1], "status": row[2],
+                "retry_count": row[3], "last_error": row[4], "next_retry_at": row[5],
+            }
+            for row in rows
+        ]
 
     def remove_api_url(self, url: str) -> bool:
         """指定 URL を直接ダウンロードキューから削除する。削除できた場合は True を返す。"""
@@ -327,17 +350,56 @@ class LogStore:
                 self._conn.commit()
         return count
 
-    def pop_api_queue(self) -> list[str]:
-        """直接ダウンロードキューの全 URL を取り出してクリアする。"""
+    def pop_api_queue(self, max_retries: int = 3) -> list[str]:
+        """処理可能な URL を 'processing' に遷移させて返す。DELETE はしない。"""
         with self._lock:
+            self._conn.execute(
+                """UPDATE api_queue SET status = 'processing'
+                   WHERE status = 'pending'
+                   AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))
+                   AND retry_count < ?""",
+                (max_retries,)
+            )
             rows = self._conn.execute(
-                "SELECT url FROM api_queue ORDER BY queued_at"
+                "SELECT url FROM api_queue WHERE status = 'processing' ORDER BY queued_at"
             ).fetchall()
-            urls = [row[0] for row in rows]
-            if urls:
-                self._conn.execute("DELETE FROM api_queue")
+            self._conn.commit()
+        return [row[0] for row in rows]
+
+    def requeue_api_url(self, url: str, error: str, max_retries: int = 3) -> bool:
+        """失敗 URL をリトライ待ちに戻す。上限到達なら DELETE して False を返す。"""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT retry_count FROM api_queue WHERE url = ? AND status = 'processing'",
+                (url,)
+            ).fetchone()
+            if not row:
+                return False
+            current_count = row[0] + 1
+            if current_count >= max_retries:
+                self._conn.execute("DELETE FROM api_queue WHERE url = ?", (url,))
                 self._conn.commit()
-        return urls
+                return False
+            delays = [60, 300, 900]
+            delay = delays[min(current_count - 1, len(delays) - 1)]
+            next_at = (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat(timespec="seconds")
+            self._conn.execute(
+                """UPDATE api_queue
+                   SET status = 'pending', retry_count = ?, last_error = ?, next_retry_at = ?
+                   WHERE url = ?""",
+                (current_count, error, next_at, url)
+            )
+            self._conn.commit()
+        return True
+
+    def reset_processing_urls(self) -> int:
+        """クラッシュ復旧: 処理中で止まった URL を pending に戻す。"""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE api_queue SET status = 'pending' WHERE status = 'processing'"
+            )
+            self._conn.commit()
+        return cur.rowcount
 
     # ── ストレージ統計 ─────────────────────────────────────────────────────────
 

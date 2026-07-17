@@ -76,7 +76,10 @@ class TestApiQueue:
         log_store.queue_url_download("https://pixiv.net/artworks/123")
         urls = log_store.pop_api_queue()
         assert len(urls) == 2
-        # pop 後はキューが空になること
+        # 処理完了後に削除
+        for url in urls:
+            log_store.remove_api_url(url)
+        # キューは空
         assert log_store.pop_api_queue() == []
 
     def test_no_duplicate_in_queue(self, log_store):
