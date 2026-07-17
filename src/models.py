@@ -34,3 +34,6 @@ class DownloadResult:
     existed_count: int = 0
     """gallery-dl が成功 (rc=0) したがファイルが既存だった URL 数。
     ダウンロード済みとしてマーク済みなので次回以降は skipped_count に計上される。"""
+
+    failed_urls: list[str] = field(default_factory=list)
+    """ダウンロードに失敗した URL のリスト。"""

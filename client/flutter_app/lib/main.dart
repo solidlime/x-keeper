@@ -153,9 +153,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     final q = widget.store.offlineQueue;
     if (q.isEmpty) return;
     try {
-      await _client.queueUrls(q);
-      await widget.store.clear();
-      debugPrint('[x-keeper] オフラインキューをフラッシュ: ${q.length} 件');
+      final result = await _client.queueUrls(q);
+      // accepted だけ削除、rejected はキューに残す
+      for (final url in result.accepted) {
+        await widget.store.remove(url);
+      }
+      if (result.rejected.isNotEmpty) {
+        debugPrint('[x-keeper] 拒否URL: ${result.rejected.length} 件');
+      }
     } catch (_) {
       // まだ未接続 → キューはそのまま保持
     }

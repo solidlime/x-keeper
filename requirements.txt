@@ -1,5 +1,5 @@
 # X (Twitter) メディアダウンローダー (API キー不要)
-gallery-dl==1.27.4
+gallery-dl>=1.31.10
 
 # 動画ダウンローダー (YouTube / TikTok / NicoNico 等)
 yt-dlp>=2024.1.0
