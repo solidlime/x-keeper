@@ -2,10 +2,14 @@
 
 import json
 import queue
+import re
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+# 日付ディレクトリ名 (YYYY-MM-DD) の判定用
+_DATE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 class LogStore:
@@ -306,6 +310,52 @@ class LogStore:
         with self._lock:
             return self._conn.execute("SELECT COUNT(*) FROM downloaded_urls").fetchone()[0]
 
+    # ── ダウンロード済みフラグ削除 ────────────────────────────────────────────
+
+    def remove_downloaded_id(self, tweet_id: str) -> bool:
+        """指定 tweet_id を downloaded_ids から削除する。削除できたら True。"""
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM downloaded_ids WHERE tweet_id = ?", (tweet_id,)
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def remove_downloaded_url(self, url: str) -> bool:
+        """指定 URL を downloaded_urls から削除する。削除できたら True。"""
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM downloaded_urls WHERE url = ?", (url,)
+            )
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def find_orphaned_downloaded_ids(self) -> list[str]:
+        """ファイルが実在しないダウンロード済 tweet_id を返す。
+
+        downloaded_ids にある tweet_id のうち、データディレクトリ内の
+        ファイル名に tweet_id が含まれないものを抽出する。
+        """
+        with self._lock:
+            rows = self._conn.execute("SELECT tweet_id FROM downloaded_ids").fetchall()
+
+        if not self._data_dir.exists():
+            return []
+
+        from src.patterns import TWEET_ID_FROM_FILENAME
+
+        existing_ids: set[str] = set()
+        for day_dir in self._data_dir.iterdir():
+            if not day_dir.is_dir() or not _DATE_DIR_RE.match(day_dir.name):
+                continue
+            for f in day_dir.iterdir():
+                if f.is_file():
+                    m = TWEET_ID_FROM_FILENAME.search(f.name)
+                    if m:
+                        existing_ids.add(m.group(1))
+
+        return [row[0] for row in rows if row[0] not in existing_ids]
+
     # ── API 直接ダウンロードキュー ─────────────────────────────────────────────
     # Chrome 拡張 / Android アプリから直接投入された URL を管理する。
 
@@ -351,15 +401,19 @@ class LogStore:
                 self._conn.commit()
         return count
 
-    def pop_api_queue(self, max_retries: int = 3) -> list[str]:
-        """処理可能な URL を 'processing' に遷移させて返す。DELETE はしない。"""
+    def pop_api_queue(self, max_attempts: int = 3) -> list[str]:
+        """処理可能な URL を 'processing' に遷移させて返す。DELETE はしない。
+
+        Args:
+            max_attempts: 総試行回数（初回＋リトライ上限）。
+        """
         with self._lock:
             self._conn.execute(
                 """UPDATE api_queue SET status = 'processing'
                    WHERE status = 'pending'
                    AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))
                    AND retry_count < ?""",
-                (max_retries,)
+                (max_attempts,)
             )
             rows = self._conn.execute(
                 "SELECT url FROM api_queue WHERE status = 'processing' ORDER BY queued_at"
@@ -367,8 +421,12 @@ class LogStore:
             self._conn.commit()
         return [row[0] for row in rows]
 
-    def requeue_api_url(self, url: str, error: str, max_retries: int = 3) -> bool:
-        """失敗 URL をリトライ待ちに戻す。上限到達なら DELETE して False を返す。"""
+    def requeue_api_url(self, url: str, error: str, max_attempts: int = 3) -> bool:
+        """失敗 URL をリトライ待ちに戻す。上限到達なら DELETE して False を返す。
+
+        Args:
+            max_attempts: 総試行回数（初回＋リトライ上限）。
+        """
         with self._lock:
             row = self._conn.execute(
                 "SELECT retry_count FROM api_queue WHERE url = ? AND status = 'processing'",
@@ -377,7 +435,7 @@ class LogStore:
             if not row:
                 return False
             current_count = row[0] + 1
-            if current_count >= max_retries:
+            if current_count >= max_attempts:
                 self._conn.execute("DELETE FROM api_queue WHERE url = ?", (url,))
                 self._conn.commit()
                 return False
