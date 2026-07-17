@@ -59,19 +59,27 @@ async def _download_url_direct(
             )
             logger.info("直接ダウンロード完了: url=%s, files=%d", url, len(saved))
             log_store.append_success([url], len(saved))
+            log_store.remove_api_url(url)
         elif _PIXIV_URL_PATTERN.search(url) or _IMGUR_URL_PATTERN.search(url):
-            saved = await loop.run_in_executor(
+            result = await loop.run_in_executor(
                 None, downloader.download_direct, [url]
             )
-            logger.info("直接ダウンロード完了: url=%s, files=%d", url, len(saved))
-            log_store.append_success([url], len(saved))
-            log_store.mark_downloaded_url(url)
+            if result.failed_urls:
+                for failed_url in result.failed_urls:
+                    requeued = log_store.requeue_api_url(failed_url, "gallery-dl failed")
+                    if not requeued:
+                        log_store.append_failure([failed_url], "retry limit exceeded")
+            else:
+                log_store.append_success([url], len(result.saved))
+                log_store.mark_downloaded_url(url)
+                log_store.remove_api_url(url)
         elif _YT_DLP_URL_PATTERN.search(url):
             saved = await loop.run_in_executor(
                 None, downloader.download_yt_dlp, url
             )
             logger.info("yt-dlp ダウンロード完了: url=%s, files=%d", url, len(saved))
             log_store.append_success([url], len(saved))
+            log_store.remove_api_url(url)
         else:
             result = await loop.run_in_executor(
                 None, downloader.download_all, [url]
@@ -80,10 +88,19 @@ async def _download_url_direct(
                 "直接ダウンロード完了: url=%s, files=%d, skipped=%d",
                 url, len(result.saved), result.skipped_count,
             )
-            log_store.append_success([url], len(result.saved))
+            if result.failed_urls:
+                for failed_url in result.failed_urls:
+                    requeued = log_store.requeue_api_url(failed_url, "gallery-dl failed after all retries")
+                    if not requeued:
+                        log_store.append_failure([failed_url], "retry limit exceeded")
+            else:
+                log_store.append_success([url], len(result.saved))
+                log_store.remove_api_url(url)
     except Exception as exc:
         logger.error("直接ダウンロードエラー: url=%s, error=%s", url, exc)
-        log_store.append_failure([url], str(exc))
+        requeued = log_store.requeue_api_url(url, str(exc))
+        if not requeued:
+            log_store.append_failure([url], f"retry limit exceeded: {exc}")
 
 
 async def _api_queue_loop(
@@ -101,6 +118,7 @@ async def _api_queue_loop(
             logger.info("API キューを処理: %d 件", len(urls))
             for url in urls:
                 await _download_url_direct(url, downloader, log_store, loop)
+                await asyncio.sleep(1)
 
 
 async def async_main() -> None:
@@ -132,6 +150,11 @@ async def async_main() -> None:
         settings.pixiv_refresh_token,
         log_store,
     )
+
+    # クラッシュ復旧: 前回処理中に落ちたURLを pending に戻す
+    reset_count = log_store.reset_processing_urls()
+    if reset_count:
+        logger.info("クラッシュ復旧: %d 件の処理中URLをリセットしました", reset_count)
 
     await _api_queue_loop(downloader, log_store, settings.retry_poll_interval)
 
