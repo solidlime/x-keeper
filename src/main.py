@@ -94,10 +94,10 @@ async def _download_url_direct(
                 url, len(result.saved), result.skipped_count,
             )
             if result.failed_urls:
-                for failed_url in result.failed_urls:
-                    requeued = log_store.requeue_api_url(failed_url, "gallery-dl failed after all retries")
-                    if not requeued:
-                        log_store.append_failure([failed_url], "retry limit exceeded")
+                log_store.append_failure(result.failed_urls, "gallery-dl failed after all retries")
+                requeued = log_store.requeue_api_url(url, f"partial failure: {len(result.failed_urls)}/{len(result.saved)+len(result.failed_urls)} failed")
+                if not requeued:
+                    log_store.append_failure([url], "retry limit exceeded")
             else:
                 log_store.append_success([url], len(result.saved))
                 log_store.remove_api_url(url)
