@@ -34,42 +34,10 @@ Chrome 拡張・Android アプリから URL を受け取り・gallery-dl / yt-dl
 - `client/flutter_app/`: Android アプリ (Flutter)
 - `tests/`: pytest テスト (85件)
 
-## Memory / Handoff 指示
+## 記憶管理
 
-### `.agent/memory/MEMORY.md` の読み書きルール
-
-セッション開始時に必ず読むこと。以下のような情報を記録する:
-
-**記録すべき内容**:
-- プロジェクト固有の設計パターン (asyncio ベース・gallery-dl のフェーズ分離・etc)
-- コーディング注意点 (変数名シャドーイング・戻り値の型・etc)
-- 学習した知識・バグ修正時の教訓
-
-**更新ルール**:
-- `MEMORY.md` は 200 行以内に保つ (超過時は `.agent/memory/` の個別ファイルに分割)
-- セッション終了時に新しい学習・テク・パターンを追記
-- 古い情報・間違った情報は削除
-
-### `.agent/handoff/HANDOFF.md` の読み書きルール
-
-前回のセッション終了時の「次のアクション」を記録する。
-
-**フォーマット**:
-```markdown
-# HANDOFF
-
-[セッション終了時のステータス]
-
-## 完了したタスク
-- Task #X: 説明
-- ...
-
-## 次のアクション
-- [ ] Task #Y: 説明
-- [ ] Task #Z: 説明
-```
-
-新しいセッション開始時に読んで、未完了タスクの継続または新規タスクに進む。
+プロジェクトの記憶（経験・教訓・引き継ぎ）は Nous リポジトリの nous メモリに一元管理する（タグ: `project:x-keeper`）。
+本リポジトリ内に `.agent/` 等の記憶ファイルは置かない。
 
 ## コーディング注意点
 
@@ -150,7 +118,7 @@ def extract_tweet_id(filename: str) -> str | None:
 2. `.spec/TODO.md` に実装タスク一覧を記述する
 3. 実装開始 (テストが必須でない場合でも、コード例で動作検証)
 4. 実装完了後に `.spec/SPEC.md` / `CLAUDE.md` を更新 (コード・ドキュメント乖離を防止)
-5. `.agent/memory/MEMORY.md` に学習事項を追記
+5. nous メモリ (`project:x-keeper` タグ) に学習事項を追記
 
 ### ドキュメント品質チェックリスト
 
