@@ -8,8 +8,25 @@ import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .notify import notify_download
+
 # 日付ディレクトリ名 (YYYY-MM-DD) の判定用
 _DATE_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+# ストレージ集計・整合性チェック対象のメディア拡張子
+_MEDIA_EXTS = frozenset({
+    ".jpg", ".jpeg", ".png", ".gif", ".webp",
+    ".mp4", ".mov", ".avi", ".webm",
+    ".mp3", ".ogg", ".wav",
+})
+
+# 終了済み (done/failed) ジョブの保持件数
+_MAX_QUEUE_HISTORY = 100
+
+
+def _utc_now() -> str:
+    """SQLite の datetime('now') と同じ UTC 表記。"""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 class LogStore:
@@ -54,7 +71,11 @@ class LogStore:
                 status        TEXT NOT NULL DEFAULT 'pending',
                 retry_count   INTEGER NOT NULL DEFAULT 0,
                 last_error    TEXT,
-                next_retry_at TEXT
+                next_retry_at TEXT,
+                source        TEXT NOT NULL DEFAULT 'api',
+                started_at    TEXT,
+                finished_at   TEXT,
+                updated_at    TEXT
             );
         """)
         self._conn.commit()
@@ -64,12 +85,23 @@ class LogStore:
             ("retry_count", "INTEGER NOT NULL DEFAULT 0"),
             ("last_error", "TEXT"),
             ("next_retry_at", "TEXT"),
+            ("source", "TEXT NOT NULL DEFAULT 'api'"),
+            ("started_at", "TEXT"),
+            ("finished_at", "TEXT"),
+            ("updated_at", "TEXT"),
         ]:
             try:
                 self._conn.execute(f"ALTER TABLE api_queue ADD COLUMN {col} {col_def}")
             except sqlite3.OperationalError as e:
                 if "duplicate column name" not in str(e).lower():
                     raise
+        self._conn.commit()
+        # 検索・絞り込み用インデックス (ALTER 後に作成する)
+        self._conn.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_api_queue_status ON api_queue(status, queued_at);
+            CREATE INDEX IF NOT EXISTS idx_download_log_status ON download_log(status, id);
+            CREATE INDEX IF NOT EXISTS idx_download_log_ts ON download_log(ts);
+        """)
         self._conn.commit()
 
     def _migrate_from_json(self) -> None:
@@ -173,15 +205,40 @@ class LogStore:
                 (self._MAX_LOG_ENTRIES,),
             )
             self._conn.commit()
+        notify_download(status, urls, file_count, error)
 
     # ── ログ読み出し ──────────────────────────────────────────────────────────
 
-    def get_recent_logs(self, limit: int = 100) -> list[dict]:
+    def get_recent_logs(
+        self,
+        limit: int = 100,
+        status: str | None = None,
+        q: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> list[dict]:
+        """直近ログを返す。status / q (URL・エラー部分一致) / since / until で絞り込める。"""
+        where: list[str] = []
+        params: list = []
+        if status:
+            where.append("status = ?")
+            params.append(status)
+        if q:
+            where.append("(urls LIKE ? OR error LIKE ?)")
+            params.extend([f"%{q}%", f"%{q}%"])
+        if since:
+            where.append("ts >= ?")
+            params.append(since)
+        if until:
+            where.append("ts <= ?")
+            params.append(until + "~")  # 日付のみ指定でも同日を含める
+        sql = "SELECT ts, status, urls, file_count, error FROM download_log"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT ts, status, urls, file_count, error FROM download_log ORDER BY id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+            rows = self._conn.execute(sql, params).fetchall()
         result = []
         for row in rows:
             entry: dict = {
@@ -339,46 +396,120 @@ class LogStore:
         with self._lock:
             rows = self._conn.execute("SELECT tweet_id FROM downloaded_ids").fetchall()
 
-        if not self._data_dir.exists():
-            return []
+        existing_ids = {tid for _, tid in self._iter_media_files() if tid}
+        return [row[0] for row in rows if row[0] not in existing_ids]
 
+    # ── ストレージ整合性チェック・再インデックス ───────────────────────────────
+
+    def _iter_media_files(self):
+        """日付フォルダ内のメディアファイルを (Path, tweet_id|None) で列挙する。"""
         from src.patterns import TWEET_ID_FROM_FILENAME
 
-        existing_ids: set[str] = set()
-        for day_dir in self._data_dir.iterdir():
+        if not self._data_dir.exists():
+            return
+        for day_dir in sorted(self._data_dir.iterdir()):
             if not day_dir.is_dir() or not _DATE_DIR_RE.match(day_dir.name):
                 continue
-            for f in day_dir.iterdir():
-                if f.is_file():
-                    m = TWEET_ID_FROM_FILENAME.search(f.name)
-                    if m:
-                        existing_ids.add(m.group(1))
+            try:
+                files = sorted(day_dir.iterdir())
+            except OSError:
+                continue
+            for f in files:
+                if not f.is_file() or f.suffix.lower() not in _MEDIA_EXTS:
+                    continue
+                m = TWEET_ID_FROM_FILENAME.search(f.name)
+                yield f, (m.group(1) if m else None)
 
-        return [row[0] for row in rows if row[0] not in existing_ids]
+    def find_orphaned_files(self) -> list[str]:
+        """ファイル名の tweet_id が未登録のメディアファイル (data からの相対パス)。"""
+        known = self.get_downloaded_ids()
+        return [
+            f"{f.parent.name}/{f.name}"
+            for f, tid in self._iter_media_files()
+            if tid and tid not in known
+        ]
+
+    def reindex_from_files(self) -> dict:
+        """実ファイル名から tweet_id を再登録する。"""
+        found: set[str] = set()
+        scanned = 0
+        for _f, tid in self._iter_media_files():
+            scanned += 1
+            if tid:
+                found.add(tid)
+        added = self.mark_downloaded(sorted(found))
+        return {"scanned": scanned, "found_ids": len(found), "added_ids": added}
+
+    def check_consistency(self) -> dict:
+        """DB と実ファイルの整合性サマリを返す。"""
+        orphaned_ids = self.find_orphaned_downloaded_ids()
+        orphaned_files = self.find_orphaned_files()
+        return {
+            "total_files": sum(1 for _ in self._iter_media_files()),
+            "total_tracked_ids": len(self.get_downloaded_ids()),
+            "orphaned_ids": len(orphaned_ids),
+            "orphaned_files": len(orphaned_files),
+            "in_sync": not orphaned_ids and not orphaned_files,
+        }
 
     # ── API 直接ダウンロードキュー ─────────────────────────────────────────────
     # Chrome 拡張 / Android アプリから直接投入された URL を管理する。
 
-    def queue_url_download(self, url: str) -> None:
-        """URL を直接ダウンロードキューに追加する。重複 URL は追加しない。"""
+    def queue_url_download(self, url: str, source: str = "api") -> None:
+        """URL を直接ダウンロードキューに追加する。
+
+        待機/実行中の重複 URL は追加しない。終了済み (done/failed) の URL は
+        再投入できるよう pending に戻す。
+        """
+        now = _utc_now()
         with self._lock:
             self._conn.execute(
-                """INSERT OR IGNORE INTO api_queue (url, queued_at, status, retry_count, last_error, next_retry_at)
-                   VALUES (?, ?, 'pending', 0, NULL, NULL)""",
-                (url, datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')),
+                """INSERT INTO api_queue
+                       (url, queued_at, status, retry_count, last_error, next_retry_at,
+                        source, started_at, finished_at, updated_at)
+                   VALUES (?, ?, 'pending', 0, NULL, NULL, ?, NULL, NULL, ?)
+                   ON CONFLICT(url) DO UPDATE SET
+                       status = 'pending', retry_count = 0, last_error = NULL,
+                       next_retry_at = NULL, queued_at = excluded.queued_at,
+                       source = excluded.source, started_at = NULL,
+                       finished_at = NULL, updated_at = excluded.updated_at
+                   WHERE api_queue.status IN ('done', 'failed')""",
+                (url, now, source, now),
             )
             self._conn.commit()
 
-    def peek_api_queue(self) -> list[dict]:
-        """直接ダウンロードキューの内容をクリアせずに返す。"""
+    def peek_api_queue(
+        self,
+        statuses: tuple[str, ...] = ("pending", "running", "processing"),
+        q: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict]:
+        """直接ダウンロードキューの内容をクリアせずに返す。
+
+        statuses で状態を絞り込める (UI は既定で待機/実行中のみ)。
+        """
+        placeholders = ",".join("?" for _ in statuses)
+        sql = (
+            "SELECT url, queued_at, status, retry_count, last_error, next_retry_at, "
+            "source, started_at, finished_at, updated_at FROM api_queue "
+            f"WHERE status IN ({placeholders})"
+        )
+        params: list = list(statuses)
+        if q:
+            sql += " AND url LIKE ?"
+            params.append(f"%{q}%")
+        sql += " ORDER BY queued_at"
+        if limit:
+            sql += " LIMIT ?"
+            params.append(limit)
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT url, queued_at, status, retry_count, last_error, next_retry_at FROM api_queue ORDER BY queued_at"
-            ).fetchall()
+            rows = self._conn.execute(sql, params).fetchall()
         return [
             {
                 "url": row[0], "queued_at": row[1], "status": row[2],
                 "retry_count": row[3], "last_error": row[4], "next_retry_at": row[5],
+                "source": row[6], "started_at": row[7], "finished_at": row[8],
+                "updated_at": row[9],
             }
             for row in rows
         ]
@@ -393,72 +524,135 @@ class LogStore:
         return True
 
     def clear_api_queue(self) -> int:
-        """直接ダウンロードキューを全件削除する。削除件数を返す。"""
+        """待機/実行中のジョブを全件削除する。終了済みの履歴は残す。"""
         with self._lock:
-            count = self._conn.execute("SELECT COUNT(*) FROM api_queue").fetchone()[0]
+            count = self._conn.execute(
+                "SELECT COUNT(*) FROM api_queue WHERE status IN ('pending', 'running', 'processing')"
+            ).fetchone()[0]
             if count:
-                self._conn.execute("DELETE FROM api_queue")
+                self._conn.execute(
+                    "DELETE FROM api_queue WHERE status IN ('pending', 'running', 'processing')"
+                )
                 self._conn.commit()
         return count
 
     def pop_api_queue(self, max_attempts: int = 3) -> list[str]:
-        """処理可能な URL を 'processing' に遷移させて返す。DELETE はしない。
+        """処理可能な URL を 'running' に遷移させて返す。DELETE はしない。
 
         Args:
             max_attempts: 総試行回数（初回＋リトライ上限）。
         """
+        now = _utc_now()
         with self._lock:
-            self._conn.execute(
-                """UPDATE api_queue SET status = 'processing'
-                   WHERE status = 'pending'
-                   AND (next_retry_at IS NULL OR next_retry_at <= datetime('now'))
-                   AND retry_count < ?""",
-                (max_attempts,)
-            )
             rows = self._conn.execute(
-                "SELECT url FROM api_queue WHERE status = 'processing' ORDER BY queued_at"
+                """SELECT url FROM api_queue
+                   WHERE status = 'pending'
+                   AND (next_retry_at IS NULL OR next_retry_at <= ?)
+                   AND retry_count < ?
+                   ORDER BY queued_at""",
+                (now, max_attempts),
             ).fetchall()
+            urls = [row[0] for row in rows]
+            for url in urls:
+                self._conn.execute(
+                    """UPDATE api_queue
+                       SET status = 'running', started_at = ?, updated_at = ?
+                       WHERE url = ? AND status = 'pending'""",
+                    (now, now, url),
+                )
             self._conn.commit()
-        return [row[0] for row in rows]
+        return urls
+
+    def complete_api_url(self, url: str) -> bool:
+        """ジョブを成功 (done) として記録する。"""
+        now = _utc_now()
+        with self._lock:
+            cur = self._conn.execute(
+                """UPDATE api_queue
+                   SET status = 'done', finished_at = ?, updated_at = ?, last_error = NULL
+                   WHERE url = ?""",
+                (now, now, url),
+            )
+            self._prune_queue_history()
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def fail_api_url(self, url: str, error: str) -> bool:
+        """ジョブを恒久失敗 (failed) として記録する。"""
+        now = _utc_now()
+        with self._lock:
+            cur = self._conn.execute(
+                """UPDATE api_queue
+                   SET status = 'failed', retry_count = retry_count + 1,
+                       last_error = ?, finished_at = ?, updated_at = ?
+                   WHERE url = ?""",
+                (error, now, now, url),
+            )
+            self._prune_queue_history()
+            self._conn.commit()
+        return cur.rowcount > 0
 
     def requeue_api_url(self, url: str, error: str, max_attempts: int = 3) -> bool:
-        """失敗 URL をリトライ待ちに戻す。上限到達なら DELETE して False を返す。
+        """失敗 URL をリトライ待ちに戻す。上限到達なら failed にして False を返す。
 
         Args:
             max_attempts: 総試行回数（初回＋リトライ上限）。
         """
         with self._lock:
             row = self._conn.execute(
-                "SELECT retry_count FROM api_queue WHERE url = ? AND status = 'processing'",
+                "SELECT retry_count FROM api_queue WHERE url = ? AND status IN ('running', 'processing')",
                 (url,)
             ).fetchone()
             if not row:
                 return False
             current_count = row[0] + 1
             if current_count >= max_attempts:
-                self._conn.execute("DELETE FROM api_queue WHERE url = ?", (url,))
+                now = _utc_now()
+                self._conn.execute(
+                    """UPDATE api_queue
+                       SET status = 'failed', retry_count = ?, last_error = ?,
+                           finished_at = ?, updated_at = ?
+                       WHERE url = ?""",
+                    (current_count, error, now, now, url),
+                )
+                self._prune_queue_history()
                 self._conn.commit()
                 return False
             delays = [60, 300, 900]
             delay = delays[min(current_count - 1, len(delays) - 1)]
-            next_at = (datetime.now(timezone.utc) + timedelta(seconds=delay)).strftime('%Y-%m-%d %H:%M:%S')
+            now_dt = datetime.now(timezone.utc)
+            next_at = (now_dt + timedelta(seconds=delay)).strftime('%Y-%m-%d %H:%M:%S')
             self._conn.execute(
                 """UPDATE api_queue
-                   SET status = 'pending', retry_count = ?, last_error = ?, next_retry_at = ?
+                   SET status = 'pending', retry_count = ?, last_error = ?,
+                       next_retry_at = ?, updated_at = ?
                    WHERE url = ?""",
-                (current_count, error, next_at, url)
+                (current_count, error, next_at, _utc_now(), url)
             )
             self._conn.commit()
         return True
 
     def reset_processing_urls(self) -> int:
-        """クラッシュ復旧: 処理中で止まった URL を pending に戻す。"""
+        """クラッシュ復旧: 実行中で止まった URL を pending に戻す。"""
         with self._lock:
             cur = self._conn.execute(
-                "UPDATE api_queue SET status = 'pending' WHERE status = 'processing'"
+                "UPDATE api_queue SET status = 'pending' WHERE status IN ('running', 'processing')"
             )
             self._conn.commit()
         return cur.rowcount
+
+    def _prune_queue_history(self) -> None:
+        """終了済みジョブを最新 _MAX_QUEUE_HISTORY 件だけ残す (要ロック)。"""
+        self._conn.execute(
+            """DELETE FROM api_queue
+               WHERE status IN ('done', 'failed')
+               AND url NOT IN (
+                   SELECT url FROM api_queue
+                   WHERE status IN ('done', 'failed')
+                   ORDER BY finished_at DESC, rowid DESC LIMIT ?
+               )""",
+            (_MAX_QUEUE_HISTORY,),
+        )
 
     # ── ストレージ統計 ─────────────────────────────────────────────────────────
 
@@ -494,11 +688,6 @@ class LogStore:
         total_urls = self.count_downloaded_urls()
 
         # data ディレクトリ内のメディアファイルを日付フォルダ別に集計
-        _MEDIA_EXTS = frozenset({
-            ".jpg", ".jpeg", ".png", ".gif", ".webp",
-            ".mp4", ".mov", ".avi", ".webm",
-            ".mp3", ".ogg", ".wav",
-        })
         files_per_day: list[dict] = []
         by_ext: dict[str, int] = {}
         total_files = 0

@@ -12,6 +12,7 @@ import threading
 from .config import Settings
 from .image_downloader import MediaDownloader
 from .log_store import LogStore
+from .notify import notify_download
 from .patterns import IMGUR_URL_PATTERN, PIXIV_URL_PATTERN, X_MEDIA_PAGE_PATTERN, YT_DLP_URL_PATTERN
 from . import web_setup as _web_setup_module
 from .web_setup import app as _setup_app
@@ -60,10 +61,11 @@ async def _download_url_direct(
             logger.info("直接ダウンロード完了: url=%s, files=%d", url, len(saved))
             if saved:
                 log_store.append_success([url], len(saved))
-                log_store.remove_api_url(url)
+                log_store.complete_api_url(url)
             else:
                 requeued = log_store.requeue_api_url(url, "download_user_media returned 0 files")
                 if not requeued:
+                    log_store.fail_api_url(url, "download_user_media returned 0 files")
                     log_store.append_failure([url], "retry limit exceeded: 0 files")
         elif _PIXIV_URL_PATTERN.search(url) or _IMGUR_URL_PATTERN.search(url):
             result = await loop.run_in_executor(
@@ -73,18 +75,19 @@ async def _download_url_direct(
                 for failed_url in result.failed_urls:
                     requeued = log_store.requeue_api_url(failed_url, "gallery-dl failed")
                     if not requeued:
+                        log_store.fail_api_url(url, "gallery-dl failed")
                         log_store.append_failure([failed_url], "retry limit exceeded")
             else:
                 log_store.append_success([url], len(result.saved))
                 log_store.mark_downloaded_url(url)
-                log_store.remove_api_url(url)
+                log_store.complete_api_url(url)
         elif _YT_DLP_URL_PATTERN.search(url):
             saved = await loop.run_in_executor(
                 None, downloader.download_yt_dlp, url
             )
             logger.info("yt-dlp ダウンロード完了: url=%s, files=%d", url, len(saved))
             log_store.append_success([url], len(saved))
-            log_store.remove_api_url(url)
+            log_store.complete_api_url(url)
         else:
             result = await loop.run_in_executor(
                 None, downloader.download_all, [url]
@@ -97,15 +100,25 @@ async def _download_url_direct(
                 log_store.append_failure(result.failed_urls, "gallery-dl failed after all retries")
                 requeued = log_store.requeue_api_url(url, f"partial failure: {len(result.failed_urls)}/{len(result.saved)+len(result.failed_urls)} failed")
                 if not requeued:
+                    log_store.fail_api_url(url, "partial failure")
                     log_store.append_failure([url], "retry limit exceeded")
             else:
                 log_store.append_success([url], len(result.saved))
-                log_store.remove_api_url(url)
+                log_store.complete_api_url(url)
     except Exception as exc:
         logger.error("直接ダウンロードエラー: url=%s, error=%s", url, exc)
         requeued = log_store.requeue_api_url(url, str(exc))
         if not requeued:
+            log_store.fail_api_url(url, str(exc))
             log_store.append_failure([url], f"retry limit exceeded: {exc}")
+
+
+def _notify_finished(log_store: LogStore, url: str) -> None:
+    """処理後の最終状態を Webhook に通知する (未設定なら何もしない)。"""
+    for item in log_store.peek_api_queue(statuses=("done", "failed")):
+        if item["url"] == url:
+            notify_download(item["status"], [url], error=item["last_error"])
+            return
 
 
 async def _api_queue_loop(
@@ -123,6 +136,7 @@ async def _api_queue_loop(
             logger.info("API キューを処理: %d 件", len(urls))
             for url in urls:
                 await _download_url_direct(url, downloader, log_store, loop)
+                _notify_finished(log_store, url)
                 await asyncio.sleep(1)
 
 
@@ -134,6 +148,9 @@ async def async_main() -> None:
     logger.info("x-keeper を起動します")
 
     log_store = LogStore(settings.save_path)
+    recovered = log_store.reset_processing_urls()
+    if recovered:
+        logger.info("中断されたジョブを pending に戻しました: %d 件", recovered)
     _web_setup_module.set_log_store(log_store)
 
     # Flask をデーモンスレッドで起動 (ギャラリー UI)

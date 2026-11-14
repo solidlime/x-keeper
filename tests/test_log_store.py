@@ -168,3 +168,107 @@ class TestGetStorageStats:
         entry = next(x for x in stats["files_per_day"] if x["date"] == "2025-06-15")
         assert entry["count"] == 1
         assert entry["size_bytes"] == 512
+
+
+class TestApiQueuePersistence:
+    """SQLite 永続ジョブキューの状態遷移と再起動耐性。"""
+
+    URL = "https://x.com/u/status/1"
+
+    def test_status_transitions(self, log_store):
+        log_store.queue_url_download(self.URL, source="extension")
+        [item] = log_store.peek_api_queue()
+        assert item["status"] == "pending"
+        assert item["source"] == "extension"
+
+        assert log_store.pop_api_queue() == [self.URL]
+        assert log_store.peek_api_queue()[0]["status"] == "running"
+        assert log_store.peek_api_queue()[0]["started_at"]
+
+        log_store.complete_api_url(self.URL)
+        assert log_store.peek_api_queue() == []
+        [done] = log_store.peek_api_queue(statuses=("done",))
+        assert done["status"] == "done"
+        assert done["finished_at"]
+
+    def test_pop_returns_running_only_once(self, log_store):
+        log_store.queue_url_download(self.URL)
+        assert log_store.pop_api_queue() == [self.URL]
+        assert log_store.pop_api_queue() == []
+
+    def test_terminal_failure_recorded(self, log_store):
+        log_store.queue_url_download(self.URL)
+        log_store.pop_api_queue()
+        assert log_store.requeue_api_url(self.URL, "boom", max_attempts=1) is False
+        assert log_store.peek_api_queue() == []
+        [failed] = log_store.peek_api_queue(statuses=("failed",))
+        assert failed["last_error"] == "boom"
+        assert failed["retry_count"] == 1
+        assert failed["finished_at"]
+
+    def test_retry_schedules_pending(self, log_store):
+        log_store.queue_url_download(self.URL)
+        log_store.pop_api_queue()
+        assert log_store.requeue_api_url(self.URL, "boom", max_attempts=3) is True
+        [item] = log_store.peek_api_queue()
+        assert item["status"] == "pending"
+        assert item["retry_count"] == 1
+        assert item["next_retry_at"]
+        # 次回時刻が未来なので即時 claim されない
+        assert log_store.pop_api_queue() == []
+
+    def test_survives_restart(self, tmp_path):
+        from src.log_store import LogStore
+
+        first = LogStore(tmp_path)
+        first.queue_url_download(self.URL, source="android")
+        assert first.pop_api_queue() == [self.URL]  # running のまま落ちた想定
+
+        second = LogStore(tmp_path)
+        assert second.reset_processing_urls() == 1
+        assert second.pop_api_queue() == [self.URL]
+        assert second.peek_api_queue()[0]["source"] == "android"
+
+    def test_readd_after_done(self, log_store):
+        log_store.queue_url_download(self.URL)
+        log_store.pop_api_queue()
+        log_store.complete_api_url(self.URL)
+        log_store.queue_url_download(self.URL)
+        assert log_store.pop_api_queue() == [self.URL]
+
+    def test_clear_keeps_history(self, log_store):
+        log_store.queue_url_download(self.URL)
+        log_store.pop_api_queue()
+        log_store.complete_api_url(self.URL)
+        log_store.queue_url_download("https://x.com/u/status/2")
+        assert log_store.clear_api_queue() == 1
+        [done] = log_store.peek_api_queue(statuses=("done",))
+        assert done["url"] == self.URL
+
+    def test_filter_by_status_and_query(self, log_store):
+        log_store.queue_url_download("https://x.com/u/status/1")
+        log_store.queue_url_download("https://pixiv.net/artworks/123")
+        assert [i["url"] for i in log_store.peek_api_queue(q="pixiv")] == [
+            "https://pixiv.net/artworks/123"
+        ]
+        assert len(log_store.peek_api_queue(limit=1)) == 1
+
+
+class TestSearchFilters:
+    def test_filter_by_status(self, log_store):
+        log_store.append_success(["https://x.com/u/status/1"], 1)
+        log_store.append_failure(["https://x.com/u/status/2"], "timeout")
+        failures = log_store.get_recent_logs(status="failure")
+        assert [e["error"] for e in failures] == ["timeout"]
+
+    def test_filter_by_query(self, log_store):
+        log_store.append_success(["https://x.com/alice/status/1"], 1)
+        log_store.append_success(["https://x.com/bob/status/2"], 1)
+        logs = log_store.get_recent_logs(q="alice")
+        assert len(logs) == 1
+        assert "alice" in logs[0]["urls"][0]
+
+    def test_filter_by_date(self, log_store):
+        log_store.append_success(["https://x.com/u/status/1"], 1)
+        assert log_store.get_recent_logs(since="2999-01-01") == []
+        assert len(log_store.get_recent_logs(until="2999-01-01")) == 1

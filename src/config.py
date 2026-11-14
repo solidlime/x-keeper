@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     retry_poll_interval: int = 30
     """API キューのポーリング間隔 (秒)。デフォルト: 30"""
 
+    # ── セキュリティ / 通知 ────────────────────────────────────────────────────
+    api_token: str | None = None
+    """API 認証トークン。未設定なら認証無効 (ローカル利便性優先)。"""
+
+    notify_webhook_url: str | None = None
+    """ダウンロード完了/失敗を POST する Webhook URL。未設定なら通知しない。"""
+
     # ── ロギング ──────────────────────────────────────────────────────────────
     log_level: str = "INFO"
     """ログレベル。DEBUG / INFO / WARNING / ERROR のいずれか。"""
