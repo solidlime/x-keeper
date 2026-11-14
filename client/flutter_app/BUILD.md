@@ -2,8 +2,9 @@
 
 ## 前提条件
 
-- [Flutter SDK](https://docs.flutter.dev/get-started/install/windows) 3.19 以上
-- Android Studio / Android SDK (API 21+)
+- [Flutter SDK](https://docs.flutter.dev/get-started/install/windows) stable 最新 (Gradle 9.5.0 / AGP 9.3.1 / Kotlin 2.4.20 を要求)
+- JDK 17 (Android Studio 同梱で可)
+- Android Studio / Android SDK (API 36、minSdk 24)
 - Python 3 + Pillow (`pip install Pillow`) — アイコン生成用
 
 ## ビルド手順
