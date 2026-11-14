@@ -27,7 +27,7 @@ def _cors_preflight() -> Response:
     response = Response("", 204)
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-API-Token, Authorization"
     return response
 
 
@@ -74,7 +74,7 @@ def _current_status() -> dict[str, bool]:
     from dotenv import dotenv_values
 
     env = dotenv_values(_ENV_FILE) if _ENV_FILE.exists() else {}
-    keys = ["GALLERY_DL_COOKIES_FILE", "PIXIV_REFRESH_TOKEN"]
+    keys = ["GALLERY_DL_COOKIES_FILE", "PIXIV_REFRESH_TOKEN", "API_TOKEN", "NOTIFY_WEBHOOK_URL"]
     return {k: bool(env.get(k)) for k in keys}
 
 
@@ -87,6 +87,8 @@ def _prefill_values() -> dict[str, str]:
         "pixiv_token": env.get("PIXIV_REFRESH_TOKEN", ""),
         "retry_poll_interval": env.get("RETRY_POLL_INTERVAL", "30"),
         "gallery_thumb_count": env.get("GALLERY_THUMB_COUNT", "50"),
+        "api_token": env.get("API_TOKEN", ""),
+        "notify_webhook_url": env.get("NOTIFY_WEBHOOK_URL", ""),
     }
 
 

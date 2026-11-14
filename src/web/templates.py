@@ -180,6 +180,39 @@ _INDEX_HTML = (
 
     <hr class="my-4">
 
+    <!-- API トークン設定 -->
+    <h6 class="fw-bold">
+      API トークン
+      <span class="badge bg-secondary fw-normal ms-1">任意</span>
+    </h6>
+    <p class="small text-muted mb-3">
+      Chrome 拡張・Android アプリ・外部スクリプトから API を叩くときの認証トークンです。<br>
+      未設定なら認証なし（同じネットワーク内の既存利用はそのまま動きます）。<br>
+      ヘッダは <code>X-API-Token: &lt;token&gt;</code> または <code>Authorization: Bearer &lt;token&gt;</code>。
+    </p>
+
+    {% if api_token_saved %}
+    <div class="alert alert-success py-2 small">API トークンを保存しました。この画面からの操作は認証済みになります。</div>
+    {% endif %}
+
+    <form method="post" action="/save-api-token">
+      <div class="mb-3">
+        <label class="form-label fw-semibold">トークン</label>
+        <div class="input-group">
+          <input type="text" class="form-control font-monospace"
+                 name="token" value="{{ prefill.api_token }}"
+                 placeholder="空で保存すると自動生成します">
+          <button type="button" class="btn btn-outline-secondary"
+                  onclick="navigator.clipboard.writeText(document.querySelector('[name=token]').value)">コピー</button>
+        </div>
+        <div class="form-text">「生成する」で新しいトークンを自動生成、「保存する」で入力値を保存します。空で保存すると認証無効です。</div>
+      </div>
+      <button type="submit" name="action" value="save" class="btn btn-outline-primary">保存する</button>
+      <button type="submit" name="action" value="generate" class="btn btn-outline-secondary">生成する</button>
+    </form>
+
+    <hr class="my-4">
+
     <!-- キュー設定 -->
     <h6 class="fw-bold">
       キュー設定
@@ -210,6 +243,14 @@ _INDEX_HTML = (
         <div class="form-text">
           ギャラリートップページで先読みするサムネイルの件数。<br>
           推奨: <code>50</code>（デフォルト）
+        </div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label fw-semibold">通知 Webhook URL</label>
+        <input type="url" class="form-control font-monospace" name="notify_webhook_url"
+               value="{{ prefill.notify_webhook_url }}" placeholder="https://example.com/webhook">
+        <div class="form-text">
+          ダウンロード完了/失敗時に JSON を POST します。空なら通知しません。
         </div>
       </div>
       <button type="submit" class="btn btn-outline-primary">保存する</button>

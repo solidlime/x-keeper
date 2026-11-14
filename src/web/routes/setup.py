@@ -11,6 +11,7 @@ import urllib.request
 
 from flask import Blueprint, redirect, render_template_string, request, session
 
+from ..auth import generate_api_token
 from ..templates import _INDEX_HTML
 from ..utils import _current_status, _prefill_values, upsert_env_value
 
@@ -41,6 +42,7 @@ def index():
         pixiv_error=request.args.get("pixiv_error"),
         pixiv_auth_url=session.get("pixiv_auth_url"),
         bot_config_saved=request.args.get("bot_config_saved") == "1",
+        api_token_saved=request.args.get("api_token_saved") == "1",
     )
 
 
@@ -51,6 +53,17 @@ def save_cookies():
     return redirect("/?cookies_saved=1")
 
 
+@bp_setup.route("/save-api-token", methods=["POST"])
+def save_api_token():
+    """API トークンを生成/保存する。保存後はブラウザセッションも認証済みにする。"""
+    token = request.form.get("token", "").strip()
+    if request.form.get("action") == "generate" or not token:
+        token = generate_api_token()
+    upsert_env_value("API_TOKEN", token)
+    session["api_token"] = token
+    return redirect("/?setup=1&api_token_saved=1")
+
+
 @bp_setup.route("/save-bot-config", methods=["POST"])
 def save_bot_config():
     retry_poll_interval = request.form.get("retry_poll_interval", "30").strip()
@@ -59,6 +72,7 @@ def save_bot_config():
         return redirect("/?setup=1&error=数値を入力してください")
     upsert_env_value("RETRY_POLL_INTERVAL", retry_poll_interval)
     upsert_env_value("GALLERY_THUMB_COUNT", gallery_thumb_count)
+    upsert_env_value("NOTIFY_WEBHOOK_URL", request.form.get("notify_webhook_url", "").strip())
     return redirect("/?setup=1&bot_config_saved=1")
 
 

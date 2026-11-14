@@ -8,10 +8,12 @@ from flask import Blueprint, Response, jsonify, request, stream_with_context
 from flask import current_app
 
 from ...patterns import API_URL_PATTERN as _API_URL_PATTERN
+from ..auth import require_api_token
 from ..globals import get_log_store
 from ..utils import _cors_preflight, _extract_tweet_ids_from_import
 
 bp_api = Blueprint("bp_api", __name__)
+bp_api.before_request(require_api_token)
 
 
 @bp_api.route("/api/update", methods=["POST", "OPTIONS"])
