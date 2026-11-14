@@ -37,6 +37,9 @@ let _queuedUrls = new Set();
  */
 let _contextInvalidated = false;
 
+/** 現在のサイトのボタン/バッジ表示を更新するフック (setup* が設定する) */
+let _refreshPageState = () => {};
+
 // ── ストレージユーティリティ ──────────────────────────────────────────────────
 
 async function getServerUrl() {
@@ -457,8 +460,7 @@ function toast(msg, isError) {
 /**
  * URL をサービスワーカー経由でサーバーのダウンロードキューに追加する。
  * tweet_id が取得できた場合はキュー済み状態を即時反映する。
- * runtimeSendMessage を使用して Extension context invalidated 時の Uncaught Error を防止する。
- */
+ * runtimeSendMessage を使用して Extension context invalidated 時の Uncaught Error を防止する。 */
 async function queueUrl(url, btn, tweetId) {
   if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }
 
@@ -488,9 +490,27 @@ async function queueUrl(url, btn, tweetId) {
     return;
   }
   if (res.ok) {
+    _refreshPageState();
     toast('x-keeper にキューを追加しました ✓');
-  } else {
+  } else if (res.offline) {
     toast('サーバー未接続。次回接続時に送信します', true);
+  } else {
+    // 非対応 URL / トークン不一致などの恒久的な失敗: 楽観的に付けた状態を巻き戻す
+    if (tweetId) {
+      _queuedIds.delete(tweetId);
+      await saveQueuedIds();
+      const article = btn?.closest('article[data-xk-tweet-id]');
+      if (article) applyBadgeState(article, tweetId);
+    } else {
+      _queuedUrls.delete(url);
+      await saveQueuedUrls();
+      _refreshPageState();
+    }
+    const d = await storageGet(KEY_QUEUED_ITEMS);
+    await storageSet({
+      [KEY_QUEUED_ITEMS]: (d[KEY_QUEUED_ITEMS] || []).filter((i) => i.url !== url),
+    });
+    toast(`送信できません: ${res.error}`, true);
   }
   if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
 }
@@ -779,6 +799,7 @@ function onPixivNavigate() {
 }
 
 function setupPixiv() {
+  _refreshPageState = updateFloatingBtnState;
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === 'NAVIGATE') setTimeout(onPixivNavigate, 80);
     // Service Worker からの URL 更新通知: ボタン状態とサムネイルバッジを再描画しキュー済みアイテムを削除する
@@ -830,6 +851,7 @@ function setupVideoPage(getUrl, btnColor) {
     }
   });
   window.addEventListener('popstate', update);
+  _refreshPageState = update;
   update();
 }
 
@@ -846,6 +868,15 @@ function setupTikTok() {
     return location.pathname.match(/^\/@[^/]+\/video\/\d+/)
       ? location.href.split('?')[0] : null;
   }, '#010101');
+}
+
+/** Imgur: ギャラリー (/gallery/{id}, /a/{id}) と単体画像ページ (/AbCdEf) に対応 */
+function setupImgur() {
+  setupVideoPage(() => {
+    const p = location.pathname.replace(/\/+$/, '');
+    const ok = /^\/(?:gallery|a)\/[A-Za-z0-9]+$/.test(p) || /^\/[A-Za-z0-9]{5,10}$/.test(p);
+    return ok ? `https://imgur.com${p}` : null;
+  }, '#1bb76e');
 }
 
 function setupNicoNico() {
@@ -872,6 +903,9 @@ function setupNicoNico() {
     // ダウンロード済み URL を Service Worker 経由で取得してからボタン表示
     loadDownloadedUrls();
     setupPixiv();
+  } else if (host === 'imgur.com') {
+    loadDownloadedUrls();
+    setupImgur();
   } else if (host === 'www.youtube.com') {
     loadDownloadedUrls();
     setupYouTube();
