@@ -192,7 +192,7 @@ _INDEX_HTML = (
     </p>
 
     {% if api_token_saved %}
-    <div class="alert alert-success py-2 small">API トークンを保存しました。この画面からの操作は認証済みになります。</div>
+    <div class="alert alert-success py-2 small">API トークンを保存しました。この画面（このブラウザ）からの操作は認証済みになります。</div>
     {% endif %}
 
     <form method="post" action="/save-api-token">
@@ -205,10 +205,14 @@ _INDEX_HTML = (
           <button type="button" class="btn btn-outline-secondary"
                   onclick="navigator.clipboard.writeText(document.querySelector('[name=token]').value)">コピー</button>
         </div>
-        <div class="form-text">「生成する」で新しいトークンを自動生成、「保存する」で入力値を保存します。空で保存すると認証無効です。</div>
+        <div class="form-text">「生成する」で新しいトークンを自動生成、「保存する」で入力値を保存します。<br>
+          トークン設定後の設定変更は認証が必要です（同じトークンを保存し直すとログインできます）。
+        </div>
       </div>
       <button type="submit" name="action" value="save" class="btn btn-outline-primary">保存する</button>
       <button type="submit" name="action" value="generate" class="btn btn-outline-secondary">生成する</button>
+      <button type="submit" name="action" value="disable" class="btn btn-outline-danger"
+              onclick="return confirm('API トークンを削除して認証を無効化しますか？')">無効化</button>
     </form>
 
     <hr class="my-4">

@@ -2,9 +2,10 @@
 
 from pathlib import Path
 
-from flask import Blueprint, send_from_directory, request
+from flask import Blueprint, jsonify, send_from_directory, request
 from flask import current_app
 
+from ..auth import is_authenticated
 from ..utils import _SAVE_PATH, _THUMBS_DIR, _THUMB_IMAGE_EXTS, _THUMB_MAX_SIZE
 
 bp_media = Blueprint("bp_media", __name__)
@@ -70,6 +71,8 @@ def serve_thumb(filepath: str):
 
 @bp_media.route("/delete-media", methods=["POST"])
 def delete_media():
+    if not is_authenticated():
+        return jsonify({"error": "unauthorized"}), 401
     filepath = request.form.get("path", "").strip()
     try:
         target = (Path(_SAVE_PATH) / filepath).resolve()

@@ -148,9 +148,10 @@ async def async_main() -> None:
     logger.info("x-keeper を起動します")
 
     log_store = LogStore(settings.save_path)
+    # クラッシュ復旧: 前回処理中に落ちたURLを pending に戻す
     recovered = log_store.reset_processing_urls()
     if recovered:
-        logger.info("中断されたジョブを pending に戻しました: %d 件", recovered)
+        logger.info("クラッシュ復旧: %d 件の処理中URLを pending に戻しました", recovered)
     _web_setup_module.set_log_store(log_store)
 
     # Flask をデーモンスレッドで起動 (ギャラリー UI)

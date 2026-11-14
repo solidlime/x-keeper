@@ -10,12 +10,37 @@ import urllib.parse
 import urllib.request
 
 from flask import Blueprint, redirect, render_template_string, request, session
+from flask import current_app
 
-from ..auth import generate_api_token
+from ..auth import generate_api_token, get_api_token, is_authenticated, session_secret
 from ..templates import _INDEX_HTML
 from ..utils import _current_status, _prefill_values, upsert_env_value
 
 bp_setup = Blueprint("bp_setup", __name__)
+
+# API トークン設定時に認証を要求する設定変更ルート
+# (/save-api-token は未認証でも使えるが、既存トークンの書き換えは個別に拒否する)
+_PROTECTED_PATHS = frozenset({
+    "/save-cookies",
+    "/save-bot-config",
+    "/save-pixiv-token",
+    "/pixiv-oauth/start",
+    "/pixiv-oauth/cancel",
+    "/pixiv-oauth/exchange",
+})
+
+
+def _unauthorized_redirect():
+    msg = urllib.parse.quote("API トークンで認証してください (セットアップ画面でトークンを入力して保存)")
+    return redirect(f"/?setup=1&error={msg}")
+
+
+@bp_setup.before_request
+def _require_token_for_settings():
+    """トークン設定時、設定変更系ルートはブラウザセッション/ヘッダ認証を要求する。"""
+    if request.path in _PROTECTED_PATHS and not is_authenticated():
+        return _unauthorized_redirect()
+    return None
 
 # Pixiv OAuth (gallery-dl と同じ公式アプリ資格情報)
 _PIXIV_CLIENT_ID = "MOBrBDS8blbauoSck0ZfDbtuzpyT"
@@ -55,12 +80,33 @@ def save_cookies():
 
 @bp_setup.route("/save-api-token", methods=["POST"])
 def save_api_token():
-    """API トークンを生成/保存する。保存後はブラウザセッションも認証済みにする。"""
+    """API トークンを生成/保存/無効化する。保存後はブラウザセッションも認証済みにする。
+
+    既にトークンが設定されている場合、未認証のリクエストでは書き換えられない
+    (同じトークンの再入力 = ログインは許可する)。
+    """
+    current = get_api_token()
+    action = request.form.get("action", "save")
     token = request.form.get("token", "").strip()
-    if request.form.get("action") == "generate" or not token:
+
+    if action == "generate":
         token = generate_api_token()
+    elif action == "disable":
+        token = ""
+    elif not token:
+        msg = urllib.parse.quote("トークンが空です。「生成する」か「無効化」を選んでください")
+        return redirect(f"/?setup=1&error={msg}")
+
+    if current and not is_authenticated() and token != current:
+        return _unauthorized_redirect()
+
     upsert_env_value("API_TOKEN", token)
-    session["api_token"] = token
+    # セッション鍵もトークン由来に更新 (次回以降のリクエストと再起動後も同じ鍵)
+    current_app.secret_key = session_secret(token)
+    if token:
+        session["api_token"] = token
+    else:
+        session.pop("api_token", None)
     return redirect("/?setup=1&api_token_saved=1")
 
 

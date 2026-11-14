@@ -5,6 +5,7 @@
 `/api/health` と OPTIONS プリフライトは常に素通し。
 """
 
+import hashlib
 import os
 import secrets
 from pathlib import Path
@@ -34,6 +35,17 @@ def get_api_token() -> str:
 
 def generate_api_token() -> str:
     return secrets.token_urlsafe(32)
+
+
+def session_secret(token: str | None = None) -> str:
+    """セッション鍵を API トークンから導出する (再起動してもブラウザ認証が切れない)。
+
+    トークン未設定なら毎回ランダム (セッションは再起動で切れる)。
+    """
+    token = get_api_token() if token is None else token
+    if not token:
+        return secrets.token_hex(32)
+    return hashlib.sha256(f"x-keeper:{token}".encode()).hexdigest()
 
 
 def _request_token() -> str:

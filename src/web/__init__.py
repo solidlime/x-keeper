@@ -1,11 +1,8 @@
 """Flask アプリケーション。src/web/ パッケージのエントリーポイント。"""
 
-import hashlib
-import os
-import secrets
-
 from flask import Flask
 
+from .auth import session_secret
 from .globals import set_log_store
 from .routes import register_blueprints
 
@@ -13,11 +10,7 @@ _ALLOWED_HEADERS = "Content-Type, X-API-Token, Authorization"
 
 app = Flask(__name__)
 # API_TOKEN 設定時はセッション鍵を安定化 (再起動でブラウザ認証が切れないように)
-app.secret_key = (
-    hashlib.sha256(f"x-keeper:{os.getenv('API_TOKEN', '')}".encode()).hexdigest()
-    if os.getenv("API_TOKEN", "")
-    else secrets.token_hex(32)
-)
+app.secret_key = session_secret()
 
 
 @app.after_request

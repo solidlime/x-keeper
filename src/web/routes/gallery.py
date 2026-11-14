@@ -6,6 +6,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, redirect, render_template_string, request
 
+from ..auth import require_api_token
 from ..templates import (
     _ACCORDION_FRAGMENT_HTML,
     _GALLERY_DATE_HTML,
@@ -15,6 +16,14 @@ from ..templates import (
 from ..utils import _ENV_FILE, _SAVE_PATH, _media_type
 
 bp_gallery = Blueprint("bp_gallery", __name__)
+
+
+@bp_gallery.before_request
+def _protect_gallery_api():
+    """`/api/gallery/*` は他の `/api/*` と同じくトークン保護下に置く。"""
+    if request.path.startswith("/api/"):
+        return require_api_token()
+    return None
 
 
 @bp_gallery.route("/gallery")
