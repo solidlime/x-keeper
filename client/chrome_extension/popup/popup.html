@@ -7,6 +7,7 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       width: 340px;
+      margin: 0 auto;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       font-size: 13px;
       background: #0f172a;
@@ -160,6 +161,21 @@
     /* 区切り線 */
     hr { border: none; border-top: 1px solid #1e293b; }
 
+    /* インライン通知 (alert の代わり) */
+    #notice {
+      display: none;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+    #notice.error { background: #7f1d1d; color: #fca5a5; }
+    #notice.info  { background: #1e3a5f; color: #93c5fd; }
+
+    #token-state { font-weight: 400; text-transform: none; letter-spacing: 0; }
+    .muted { color: #475569; }
+
     /* 履歴 */
     .history-row { display: flex; gap: 6px; }
     .history-row button { flex: 1; }
@@ -243,6 +259,17 @@
       </div>
     </div>
 
+    <!-- API トークン: サーバー側 API_TOKEN と一致させる。未設定サーバーなら空のままでよい -->
+    <div>
+      <div class="section-label">API トークン <span id="token-state" class="muted"></span></div>
+      <div class="input-row">
+        <input id="api-token" type="password" autocomplete="off"
+               placeholder="未設定 (サーバーが API_TOKEN 未設定なら不要)">
+      </div>
+    </div>
+
+    <div id="notice"></div>
+
     <!-- ギャラリーリンク & 統計 -->
     <div class="link-row">
       <button id="btn-gallery" class="btn-secondary">
@@ -312,7 +339,7 @@
     </div>
   </main>
 
-  <footer>x-keeper Client v1.3.0</footer>
+  <footer>x-keeper Client v1.4.0 &middot; <a id="btn-options" href="#" style="color:#64748b">設定ページ</a></footer>
 
   <input id="import-file" type="file" accept=".json" style="display:none">
   <script src="popup.js"></script>

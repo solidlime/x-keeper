@@ -3,6 +3,10 @@
 // ── DOM 参照 ──────────────────────────────────────────────────────────────────
 
 const $serverUrl        = document.getElementById('server-url');
+const $apiToken         = document.getElementById('api-token');
+const $tokenState       = document.getElementById('token-state');
+const $notice           = document.getElementById('notice');
+const $btnOptions       = document.getElementById('btn-options');
 const $btnTest          = document.getElementById('btn-test');
 const $btnSave          = document.getElementById('btn-save');
 const $btnGallery       = document.getElementById('btn-gallery');
@@ -51,9 +55,36 @@ function send(msg) {
   });
 }
 
-function setStatus(online) {
-  $statusBadge.textContent = online ? '接続中' : '未接続';
-  $statusBadge.className   = online ? 'online'  : 'offline';
+/**
+ * 接続バッジを更新する。
+ * authOk === false (サーバーが 401 を返した) のときはトークン不一致を明示する。
+ */
+function setStatus(online, authOk = null) {
+  if (!online) {
+    $statusBadge.textContent = '未接続';
+    $statusBadge.className   = 'offline';
+  } else if (authOk === false) {
+    $statusBadge.textContent = 'トークン不一致';
+    $statusBadge.className   = 'offline';
+  } else {
+    $statusBadge.textContent = '接続中';
+    $statusBadge.className   = 'online';
+  }
+}
+
+/** alert の代わりにポップアップ内へインライン通知を出す */
+let _noticeTimer = null;
+function notice(msg, isError = true) {
+  $notice.textContent = msg;
+  $notice.className   = isError ? 'error' : 'info';
+  $notice.style.display = '';
+  clearTimeout(_noticeTimer);
+  _noticeTimer = setTimeout(() => { $notice.style.display = 'none'; }, 5000);
+}
+
+/** トークン設定状態をラベルに反映する */
+function renderTokenState(token) {
+  $tokenState.textContent = token ? '(設定済)' : '(未設定)';
 }
 
 function renderHistoryCount(count) {
@@ -67,9 +98,12 @@ function renderQueue(queue) {
   }
   $queueSection.style.display = '';
   $queueCount.textContent = `(${queue.length} 件)`;
-  $queueList.innerHTML = queue
-    .map(u => `<p title="${u}">${u}</p>`)
-    .join('');
+  $queueList.replaceChildren(...queue.map((u) => {
+    const p = document.createElement('p');
+    p.title = u;
+    p.textContent = u;
+    return p;
+  }));
 }
 
 /**
@@ -83,17 +117,24 @@ function renderApiQueue(items) {
   }
   $apiQueueSection.style.display = '';
   $apiQueueCount.textContent = `(${items.length} 件)`;
-  $apiQueueList.innerHTML = '';
-  for (const item of items) {
+  $apiQueueList.replaceChildren(...items.map((item) => {
     const url = item.url || '';
     const div = document.createElement('div');
     div.className = 'api-queue-item';
-    div.innerHTML = `
-      <span class="api-queue-url" title="${url}">${url}</span>
-      <button class="api-queue-del" data-url="${url}">削除</button>
-    `;
-    $apiQueueList.appendChild(div);
-  }
+
+    const span = document.createElement('span');
+    span.className = 'api-queue-url';
+    span.title = url;
+    span.textContent = url;
+
+    const del = document.createElement('button');
+    del.className = 'api-queue-del';
+    del.dataset.url = url;
+    del.textContent = '削除';
+
+    div.append(span, del);
+    return div;
+  }));
   // イベント委譲で削除ボタンを処理する
   $apiQueueList.querySelectorAll('.api-queue-del').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -109,7 +150,7 @@ function renderApiQueue(items) {
         }
       } else {
         btn.disabled = false;
-        alert(`削除失敗: ${res.error}`);
+        notice(`削除失敗: ${res.error}`);
       }
     });
   });
@@ -125,6 +166,32 @@ function formatTime(iso) {
   return `${d.getMonth() + 1}/${d.getDate()} ${hhmm}`;
 }
 
+/** ログ1件分の DOM を作る (URL はサーバー由来なので textContent で入れる) */
+function createLogEntry(url, statusLabel, statusClass, ts) {
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+
+  const urlEl = document.createElement('div');
+  urlEl.className = 'log-url';
+  urlEl.title = url;
+  urlEl.textContent = url;
+
+  const meta = document.createElement('div');
+  meta.className = 'log-meta';
+
+  const statusEl = document.createElement('span');
+  statusEl.className = `log-status ${statusClass}`;
+  statusEl.textContent = statusLabel;
+
+  const timeEl = document.createElement('span');
+  timeEl.className = 'log-time';
+  timeEl.textContent = formatTime(ts);
+
+  meta.append(statusEl, timeEl);
+  div.append(urlEl, meta);
+  return div;
+}
+
 /** サーバー側のダウンロード処理結果（最新5件）を表示する */
 function renderServerLog(logs) {
   if (!logs || logs.length === 0) {
@@ -132,7 +199,7 @@ function renderServerLog(logs) {
     return;
   }
   $serverLogSec.style.display = '';
-  $serverLogList.innerHTML = logs.map((entry) => {
+  $serverLogList.replaceChildren(...logs.map((entry) => {
     const url = (entry.urls || [])[0] || '';
     const isSuccess = entry.status === 'success';
     const statusLabel = isSuccess ? '成功' : '失敗';
@@ -140,14 +207,8 @@ function renderServerLog(logs) {
     const detail = isSuccess
       ? (entry.file_count != null ? ` ${entry.file_count}件` : '')
       : (entry.error ? ` — ${entry.error}` : '');
-    return `<div class="log-entry">
-      <div class="log-url" title="${url}">${url}</div>
-      <div class="log-meta">
-        <span class="log-status ${statusClass}">${statusLabel}${detail}</span>
-        <span class="log-time">${formatTime(entry.ts)}</span>
-      </div>
-    </div>`;
-  }).join('');
+    return createLogEntry(url, `${statusLabel}${detail}`, statusClass, entry.ts);
+  }));
 }
 
 function renderResultLog(log) {
@@ -157,21 +218,19 @@ function renderResultLog(log) {
   }
   $resultLogSec.style.display = '';
   $logCount.textContent = `(${log.length} 件)`;
-  $resultLogList.innerHTML = log.map((entry) => {
+  $resultLogList.replaceChildren(...log.map((entry) => {
     const urls = entry.urls || [];
     const urlStr = urls[0] || '';
-    const statusLabel = entry.status === 'queued' ? '送信済' : 'オフライン';
-    const statusClass = entry.status === 'queued' ? 'queued' : 'offline';
+    const statusLabel = entry.status === 'queued' ? '送信済'
+                      : entry.status === 'rejected' ? '拒否'
+                      : 'オフライン';
+    const statusClass = entry.status === 'queued' ? 'queued'
+                      : entry.status === 'rejected' ? 'failure'
+                      : 'offline';
     const rejected = (entry.rejected || []).length;
     const extra = rejected > 0 ? ` (${rejected} 件スキップ)` : '';
-    return `<div class="log-entry">
-      <div class="log-url" title="${urlStr}">${urlStr}</div>
-      <div class="log-meta">
-        <span class="log-status ${statusClass}">${statusLabel}${extra}</span>
-        <span class="log-time">${formatTime(entry.ts)}</span>
-      </div>
-    </div>`;
-  }).join('');
+    return createLogEntry(urlStr, `${statusLabel}${extra}`, statusClass, entry.ts);
+  }));
 }
 
 /**
@@ -346,7 +405,9 @@ async function init() {
 
 function applyStatus(res) {
   $serverUrl.value = res.serverUrl || '';
-  setStatus(res.online);
+  $apiToken.value  = res.apiToken || '';
+  renderTokenState(res.apiToken);
+  setStatus(res.online, res.authOk ?? null);
   renderQueue(res.queue);
   renderApiQueue(res.apiQueue || []);
   renderHistoryCount(res.historyCount ?? null);
@@ -374,16 +435,28 @@ $btnTest.addEventListener('click', async () => {
     return;
   }
 
-  // URL 保存 (scheme 補完はサービスワーカー側で行う)
+  // URL 保存 (scheme 補完・正規化はサービスワーカー側で行う)
   const saveRes = await send({ type: 'SET_SERVER_URL', url: raw });
+  if (!saveRes.ok) {
+    setStatus(false);
+    notice(saveRes.error || 'URL が不正です');
+    $btnTest.disabled = false;
+    $btnTest.textContent = 'テスト';
+    return;
+  }
   if (saveRes.url) $serverUrl.value = saveRes.url; // 補完後の URL をフィールドに反映
 
   // 接続テスト
   const statusRes = await send({ type: 'GET_STATUS' });
   const online = statusRes.ok ? statusRes.online : false;
-  setStatus(online);
+  setStatus(online, statusRes.authOk ?? null);
   renderQueue(statusRes.queue || []);
   renderApiQueue(statusRes.apiQueue || []);
+  if (statusRes.authOk === false) {
+    notice('サーバーに拒否されました。API トークンが一致していません。');
+  } else if (!online) {
+    notice('サーバーに接続できません。URL とトークンを確認してください。');
+  }
 
   // テスト結果を表示 (URL は保存済みなので失敗でも保存は成功)
   $btnTest.textContent = online ? '接続 ✓' : '未接続 ✗';
@@ -392,11 +465,28 @@ $btnTest.addEventListener('click', async () => {
 
 $btnSave.addEventListener('click', async () => {
   const raw = $serverUrl.value.trim();
-  if (!raw) return;
+  if (!raw) { notice('サーバー URL を入力してください'); return; }
+
   const res = await send({ type: 'SET_SERVER_URL', url: raw });
-  if (res.url) $serverUrl.value = res.url;
+  if (!res.ok) { notice(res.error || 'URL が不正です'); return; }
+  $serverUrl.value = res.url;
+
+  const tokenRes = await send({ type: 'SET_API_TOKEN', token: $apiToken.value });
+  renderTokenState(tokenRes.ok ? $apiToken.value.trim() : '');
+  setStatus(!!tokenRes.online);
+
   $btnSave.textContent = '保存済 ✓';
   setTimeout(() => { $btnSave.textContent = '保存'; }, 1500);
+  if (!tokenRes.ok) {
+    notice(`トークン保存に失敗: ${tokenRes.error}`);
+  } else if (!tokenRes.online) {
+    notice('保存しましたが接続できません。URL / トークンを確認してください。', false);
+  }
+});
+
+$btnOptions.addEventListener('click', (e) => {
+  e.preventDefault();
+  chrome.runtime.openOptionsPage();
 });
 
 // ── ギャラリーリンク ──────────────────────────────────────────────────────────
@@ -445,7 +535,7 @@ $btnClearApiQueue.addEventListener('click', async () => {
   if (res.ok) {
     renderApiQueue([]);
   } else {
-    alert(`全件削除失敗: ${res.error}`);
+    notice(`全件削除失敗: ${res.error}`);
   }
   $btnClearApiQueue.disabled = false;
   $btnClearApiQueue.textContent = '全件削除';
@@ -466,7 +556,7 @@ $btnExport.addEventListener('click', async () => {
   const res = await send({ type: 'EXPORT_HISTORY' });
   $btnExport.disabled = false;
   $btnExport.textContent = 'エクスポート';
-  if (!res.ok) { alert(`エクスポート失敗: ${res.error}`); return; }
+  if (!res.ok) { notice(`エクスポート失敗: ${res.error}`); return; }
 
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([res.data], { type: 'application/json' }));
@@ -495,7 +585,7 @@ $importFile.addEventListener('change', () => {
       setTimeout(() => { $btnImport.textContent = 'インポート'; }, 2000);
     } else {
       $btnImport.textContent = 'インポート';
-      alert(`インポート失敗: ${res.error}`);
+      notice(`インポート失敗: ${res.error}`);
     }
   };
   reader.readAsText(file);
