@@ -99,12 +99,13 @@ def api_queue():
     if not raw_urls:
         return jsonify({"error": "url or urls is required"}), 400
 
+    source = str(data.get("source") or "api")[:32]
     accepted: list[str] = []
     rejected: list[str] = []
     for url in raw_urls:
         if _API_URL_PATTERN.match(url):
             if _log_store:
-                _log_store.queue_url_download(url)
+                _log_store.queue_url_download(url, source=source)
             accepted.append(url)
         else:
             rejected.append(url)
@@ -117,11 +118,21 @@ def api_queue():
 
 @bp_api.route("/api/logs/recent")
 def api_logs_recent():
-    """直近のダウンロード処理結果を最新 5 件返す。"""
+    """直近のダウンロード処理結果を返す。
+
+    クエリ: limit (既定 5) / status / q / since / until
+    """
     _log_store = get_log_store()
     if not _log_store:
         return jsonify({"error": "log store not available"}), 503
-    logs = _log_store.get_recent_logs(limit=5)
+    limit = request.args.get("limit", "5")
+    logs = _log_store.get_recent_logs(
+        limit=int(limit) if limit.isdigit() else 5,
+        status=request.args.get("status") or None,
+        q=request.args.get("q") or None,
+        since=request.args.get("since") or None,
+        until=request.args.get("until") or None,
+    )
     result = [
         {
             "ts": entry.get("ts"),
@@ -168,16 +179,38 @@ def api_history_urls():
     _log_store = get_log_store()
     if not _log_store:
         return jsonify([])
-    return jsonify(sorted(_log_store.get_downloaded_urls()))
+    q = request.args.get("q", "").strip().lower()
+    domain = request.args.get("domain", "").strip().lower()
+    urls = sorted(_log_store.get_downloaded_urls())
+    if q:
+        urls = [u for u in urls if q in u.lower()]
+    if domain:
+        urls = [u for u in urls if domain in u.lower()]
+    return jsonify(urls)
 
 
 @bp_api.route("/api/queue/status")
 def api_queue_status():
-    """直接ダウンロードキュー (処理待ち URL 一覧) を返す。"""
+    """直接ダウンロードキューの一覧を返す (既定は待機/実行中のみ)。
+
+    クエリ: status=pending,running,done,failed / include_finished=1 / q / limit
+    """
     _log_store = get_log_store()
     if not _log_store:
         return jsonify([])
-    return jsonify(_log_store.peek_api_queue())
+    status_arg = request.args.get("status", "").strip()
+    if status_arg:
+        statuses = tuple(s.strip() for s in status_arg.split(",") if s.strip())
+    elif request.args.get("include_finished") == "1":
+        statuses = ("pending", "running", "processing", "done", "failed")
+    else:
+        statuses = ("pending", "running", "processing")
+    limit_arg = request.args.get("limit", "")
+    return jsonify(_log_store.peek_api_queue(
+        statuses=statuses,
+        q=request.args.get("q") or None,
+        limit=int(limit_arg) if limit_arg.isdigit() else None,
+    ))
 
 
 @bp_api.route("/api/queue/item", methods=["DELETE", "OPTIONS"])
@@ -339,3 +372,45 @@ def api_history_stream():
     response.headers["Cache-Control"] = "no-cache"
     response.headers["X-Accel-Buffering"] = "no"
     return response
+
+
+# ── ストレージ整合性 ──────────────────────────────────────────────────────────
+
+@bp_api.route("/api/storage/consistency")
+def api_storage_consistency():
+    """DB と実ファイルの整合性サマリを返す。"""
+    _log_store = get_log_store()
+    if not _log_store:
+        return jsonify({"error": "log_store not initialized"}), 500
+    return jsonify(_log_store.check_consistency())
+
+
+@bp_api.route("/api/storage/orphans")
+def api_storage_orphans():
+    """孤立フラグ (実ファイルなし ID) と孤立ファイル (ID 未登録) を返す。"""
+    _log_store = get_log_store()
+    if not _log_store:
+        return jsonify({"error": "log_store not initialized"}), 500
+    limit = request.args.get("limit", "500")
+    limit = int(limit) if limit.isdigit() else 500
+    orphaned_ids = _log_store.find_orphaned_downloaded_ids()
+    orphaned_files = _log_store.find_orphaned_files()
+    return jsonify({
+        "orphaned_ids": orphaned_ids[:limit],
+        "orphaned_files": orphaned_files[:limit],
+        "counts": {
+            "orphaned_ids": len(orphaned_ids),
+            "orphaned_files": len(orphaned_files),
+        },
+    })
+
+
+@bp_api.route("/api/storage/reindex", methods=["POST", "OPTIONS"])
+def api_storage_reindex():
+    """実ファイル名から tweet ID を再登録する。"""
+    if request.method == "OPTIONS":
+        return _cors_preflight()
+    _log_store = get_log_store()
+    if not _log_store:
+        return jsonify({"error": "log_store not initialized"}), 500
+    return jsonify(_log_store.reindex_from_files())

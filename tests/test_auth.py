@@ -81,3 +81,31 @@ class TestAuthEnabled:
             sess["api_token"] = "old-token"
         res = client_token.get("/api/history/count")
         assert res.status_code == 401
+
+
+class TestSaveApiTokenRoute:
+    def test_generate_persists_and_sets_session(self, client, monkeypatch):
+        saved = []
+        monkeypatch.setattr(
+            "src.web.routes.setup.upsert_env_value",
+            lambda key, value: saved.append((key, value)),
+        )
+        monkeypatch.setattr("src.web.routes.setup.generate_api_token", lambda: "new-token")
+
+        res = client.post("/save-api-token", data={"action": "generate"})
+
+        assert res.status_code == 302
+        assert saved == [("API_TOKEN", "new-token")]
+        with client.session_transaction() as sess:
+            assert sess["api_token"] == "new-token"
+
+    def test_explicit_token_saved(self, client, monkeypatch):
+        saved = []
+        monkeypatch.setattr(
+            "src.web.routes.setup.upsert_env_value",
+            lambda key, value: saved.append((key, value)),
+        )
+
+        client.post("/save-api-token", data={"token": "hand-made"})
+
+        assert saved == [("API_TOKEN", "hand-made")]

@@ -197,6 +197,51 @@ def gallery_fragment():
     })
 
 
+@bp_gallery.route("/api/gallery/search")
+def api_gallery_search():
+    """ギャラリー用の軽量検索 API。
+
+    クエリ: q (ファイル名部分一致) / media_type=image|video|audio|other /
+            date=YYYY-MM-DD / limit (既定 200, 最大 1000)
+    """
+    q = request.args.get("q", "").strip().lower()
+    media_type = request.args.get("media_type", "").strip().lower()
+    date = request.args.get("date", "").strip()
+    limit_arg = request.args.get("limit", "200")
+    limit = max(1, min(int(limit_arg), 1000)) if limit_arg.isdigit() else 200
+
+    save_path = Path(_SAVE_PATH)
+    files: list[dict] = []
+    truncated = False
+    if save_path.exists():
+        for date_dir in sorted(save_path.iterdir(), reverse=True):
+            if not date_dir.is_dir() or not re.match(r"^\d{4}-\d{2}-\d{2}$", date_dir.name):
+                continue
+            if date and date_dir.name != date:
+                continue
+            for f in sorted(date_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+                if not f.is_file():
+                    continue
+                if q and q not in f.name.lower():
+                    continue
+                ftype = _media_type(f.name)
+                if media_type and media_type != "all" and ftype != media_type:
+                    continue
+                if len(files) >= limit:
+                    truncated = True
+                    break
+                files.append({
+                    "name": f.name,
+                    "type": ftype,
+                    "path": f"{date_dir.name}/{f.name}",
+                    "date": date_dir.name,
+                    "size_bytes": f.stat().st_size,
+                })
+            if truncated:
+                break
+    return jsonify({"count": len(files), "truncated": truncated, "files": files})
+
+
 @bp_gallery.route("/api/gallery/calendar")
 def api_gallery_calendar():
     """指定年月のファイル数を日付ごとに返す。 {"YYYY-MM-DD": count, ...}"""
