@@ -19,7 +19,7 @@ python -m venv .venv
 .venv/Scripts/python -m src.main   # または start.bat / start.sh
 ```
 
-テスト・lint ツールは未導入。インポートチェックは `python -c "from src.XXX import YYY"` で行う。
+テストは `pytest`（`.venv/bin/python -m pytest -q`）。インポートチェックは `python -c "from src.XXX import YYY"`。
 
 ## アーキテクチャ
 
@@ -27,24 +27,20 @@ python -m venv .venv
 
 ```
 python -m src.main
-├── Flask (web_setup.py) をデーモンスレッドでポート 8989 に起動
-│   └── Ctrl+C で終了するまで起動しっぱなし (ギャラリー閲覧用)
-├── 必須設定が揃うまで .env を 30 秒ごとに再読み込みして待機
-│   (DISCORD_BOT_TOKEN / DISCORD_CHANNEL_ID)
-└── Discord Bot 起動 (asyncio ベース、イベント駆動)
-     ├── on_ready: 監視チャンネルの最新 100 件をスキャンして未処理メッセージを処理
-     ├── on_message: X/Pixiv/Imgur の URL を検出したメッセージを自動処理
+├── Flask (src/web/) をデーモンスレッドでポート 8989 に起動
+│   └── Ctrl+C で終了するまで起動しっぱなし (ギャラリー閲覧・API用)
+├── LogStore を開いて `reset_processing_urls()` でクラッシュ復旧 (処理中→pending)
+└── API キュー処理ループ (asyncio)
+     ├── RETRY_POLL_INTERVAL 秒ごとに `pop_api_queue()` で 1 件取得
+     ├── URL 種別を判定してダウンロード
      │    ├── X /media URL → MediaDownloader.download_user_media(url)
-     │    │    └── gallery-dl -D <日付フォルダ> + --filter で既取得IDをスキップ
-     │    ├── Twitter status URL → TwitterClient.get_thread(url) でスレッド収集
-     │    │    └── gallery-dl --dump-json でスレッドを遡る (reply_id を解析)
-     │    ├── Pixiv / Imgur URL → MediaDownloader.download_direct([url])
-     │    └── MediaDownloader.download_all(tweet_urls)
-     │         └── 既ダウンロード済み tweet_id をスキップ後 gallery-dl で保存
-     └── _retry_queue_task (バックグラウンド)
-          ├── RETRY_POLL_INTERVAL 秒ごとに Web UI リトライキューを処理
-          └── SCAN_INTERVAL 秒ごとに未処理メッセージを定期スキャン (0=起動時のみ)
+     │    ├── X status URL → MediaDownloader.download_all([url])
+     │    └── Pixiv / Imgur / YouTube 等 → MediaDownloader.download_direct([url])
+     ├── 成功: complete_api_url() / 失敗: fail_api_url() (60/300/900 秒後、最大 3 回)
+     └── 完了/失敗時 notify_download() で NOTIFY_WEBHOOK_URL へ POST
 ```
+
+URL の投入元は Chrome 拡張・Android アプリ（`POST /api/queue`）と Web UI（`/queue`）。Discord Bot は廃止済み。
 
 ### モジュール構成
 
@@ -55,43 +51,49 @@ python -m src.main
 | `src/models.py` | データクラス: `TweetThread`, `SavedFile`, `DownloadResult` |
 | `src/patterns.py` | URL 正規表現を一元管理 (X / Pixiv / Imgur / YT_DLP) |
 | `src/image_downloader.py` | `gallery-dl` / `yt-dlp` でメディアをダウンロードし `list[SavedFile]` を返す |
-| `src/log_store.py` | JSON 永続化ログ。成功/失敗記録・リトライキュー管理・ストレージ統計 |
+| `src/log_store.py` | SQLite 永続化 (`download_log` / `downloaded_ids` / `downloaded_urls` / `api_queue`)・API キュー・ストレージ統計 |
+| `src/notify.py` | `NOTIFY_WEBHOOK_URL` へのダウンロード結果通知 (`notify_download`) |
 | `src/web_setup.py` | `src/web/` パッケージへの薄いシム (後方互換) |
-| `src/web/__init__.py` | Flask app + CORS + Blueprint 登録 |
+| `src/web/__init__.py` | Flask app + CORS + Blueprint 登録 + secret_key |
+| `src/web/auth.py` | API トークン認証 (`require_api_token` / `is_authenticated` / `session_secret`) |
 | `src/web/globals.py` | `_log_store` グローバル管理 |
 | `src/web/utils.py` | 定数 + ユーティリティ関数 |
 | `src/web/templates.py` | 全 HTML テンプレート文字列 |
 | `src/web/routes/setup.py` | セットアップ UI (`/`, `/save-*`, `/pixiv-oauth/*`) |
-| `src/web/routes/gallery.py` | ギャラリー (`/gallery/*`) |
-| `src/web/routes/api.py` | REST API (`/api/*`) |
-| `src/web/routes/media.py` | メディア配信 (`/media/*`) |
-| `src/web/routes/admin.py` | 管理ページ (`/logs`, `/queue`, `/failures`, `/stats`) |
 
 ### 環境変数 / .env
 
 | 変数名 | 必須 | デフォルト | 説明 |
 |---|---|---|---|
-| `DISCORD_BOT_TOKEN` | ✅ | — | Discord Bot トークン |
-| `DISCORD_CHANNEL_ID` | ✅ | — | 監視チャンネル ID (カンマ区切りで複数指定可) |
+| `API_TOKEN` | — | — | API トークン。設定すると `/api/*` と設定変更系ルートが保護される |
+| `NOTIFY_WEBHOOK_URL` | — | — | ダウンロード完了/失敗時に JSON を POST する Webhook URL |
 | `GALLERY_DL_COOKIES_FILE` | — | — | gallery-dl に渡す Cookie ファイルパス (鍵垢対応) |
 | `PIXIV_REFRESH_TOKEN` | — | — | Pixiv OAuth リフレッシュトークン |
 | `SAVE_PATH` | — | `./data` | メディア保存先ルートディレクトリ |
 | `WEB_SETUP_PORT` | — | `8989` | Web サーバーポート番号 |
-| `RETRY_POLL_INTERVAL` | — | `30` | リトライキューのポーリング間隔 (秒) |
-| `SCAN_INTERVAL` | — | `0` | 未処理メッセージの定期スキャン間隔 (秒、0=起動時のみ) |
+| `RETRY_POLL_INTERVAL` | — | `30` | API キューのポーリング間隔 (秒) |
 | `GALLERY_THUMB_COUNT` | — | `50` | ギャラリートップで先読みするサムネイル数 |
 | `LOG_LEVEL` | — | `INFO` | ログレベル (DEBUG/INFO/WARNING/ERROR) |
 
+### 認証 (`src/web/auth.py`)
+
+- `API_TOKEN` 未設定 → 全リクエスト素通し (後方互換)。設定時のみ認証を要求
+- 保護対象: `/api/*` (`/api/health` と OPTIONS を除く)。`/api/gallery/*` は `bp_gallery` の `before_request` で保護
+- 設定変更系 POST/GET も保護: `/save-cookies` `/save-bot-config` `/save-pixiv-token` `/save-api-token` `/pixiv-oauth/*` `/delete-media`
+- 受理ヘッダ: `X-API-Token: <token>` または `Authorization: Bearer <token>`
+- 401 は `{"error": "unauthorized"}` (拡張/Android はこれでトークン不一致を判定)
+- トークンは環境変数 → `.env` の順に解決。UI から保存すると `.env` に書き込まれる (プロセス再起動で有効)
+- `app.secret_key` は `session_secret()` = トークンの SHA-256 由来。トークン未設定時のみランダム。UI で保存するとセッション認証されるため、再起動後もブラウザから操作可能
+- 既にトークン設定済みの状態で別トークンに差し替えるには認証が必要 (同じトークンを保存し直すとログイン扱い)
+
 ### 重要な設計上の注意点
 
-**Discord Bot の動作**:
-- `discord.Intents.message_content = True` (Privileged Intent) が必要。Developer Portal で ON にすること
-- 監視チャンネルはカンマ区切りで複数指定可能 (`DISCORD_CHANNEL_ID=111,222,333`)
-- 起動時に監視チャンネルの最新 100 件をスキャンして未処理メッセージを処理する
-- ✅ リアクション済みのメッセージは再処理しない
-- ⏳ リアクションは処理中を示す (完了後に削除)
-- ❌ リアクションは失敗を示す。Web UI の「失敗」タブからリトライ可能
-- ⏭️ リアクションは「全ツイートが重複スキップ済み」を示す (再処理不要)
+**API キュー** (`src/log_store.py` の `api_queue` テーブル):
+- `queue_url_download()` は UPSERT。`done`/`failed` の URL を再投入すると `pending` に戻るが、待機/実行中なら重複追加しない
+- `pop_api_queue()` が `pending` → `running` に遷移させて 1 件返す (アトミック)
+- 失敗時は `requeue_api_url()` で 60/300/900 秒後に再試行 (`max_attempts=3`)。超過で `failed`
+- 起動時の `reset_processing_urls()` で `running`/`processing` を `pending` に戻す (クラッシュ復旧)
+- 完了/失敗レコードは `_prune_queue_history()` で古いものから削除される
 
 **対応サービス**:
 - **X (Twitter) status**: URL パターン `twitter.com|x.com/*/status/*`。スレッド遡り対応
@@ -110,43 +112,54 @@ python -m src.main
 
 **保存先**: デフォルト `./data`（実行ディレクトリ基準）。日付サブフォルダ (`YYYY-MM-DD`) が自動作成される。
 
-**web_setup.py のルート**:
+**ルート (Blueprint 別)**:
 
 | ルート | 説明 |
 |---|---|
-| `GET /` | Discord 設定済みなら `/gallery` にリダイレクト。未設定またはクエリパラメータあり時はセットアップフォームを表示 |
+| `GET /` | セットアップフォーム (クエリパラメータなしなら `/gallery` にリダイレクト) |
 | `GET /?setup=1` | セットアップフォームを強制表示 |
-| `POST /save-discord` | Bot Token / Channel ID の保存 |
-| `POST /save-cookies` | Cookie ファイルパスの保存 |
-| `POST /save-pixiv-token` | Pixiv リフレッシュトークンの手動保存 |
-| `GET /pixiv-oauth/start` | Pixiv OAuth PKCE 開始 (JSON レスポンス) |
-| `POST /pixiv-oauth/exchange` | code → refresh_token 交換・保存 |
-| `GET /pixiv-oauth/cancel` | OAuth セッションクリア |
-| `POST /save-bot-config` | RETRY_POLL_INTERVAL / SCAN_INTERVAL / GALLERY_THUMB_COUNT の保存 |
+| `POST /save-cookies` | Cookie ファイルパスの保存 🔒 |
+| `POST /save-api-token` | API トークンの保存/自動生成/無効化 (アクション: `save` / `generate` / `disable`) 🔒 |
+| `POST /save-pixiv-token` | Pixiv リフレッシュトークンの手動保存 🔒 |
+| `GET /pixiv-oauth/start` | Pixiv OAuth PKCE 開始 (JSON レスポンス) 🔒 |
+| `POST /pixiv-oauth/exchange` | code → refresh_token 交換・保存 🔒 |
+| `GET /pixiv-oauth/cancel` | OAuth セッションクリア 🔒 |
+| `POST /save-bot-config` | RETRY_POLL_INTERVAL / GALLERY_THUMB_COUNT の保存 🔒 |
 | `GET /gallery` | ギャラリートップ。日付アコーディオン + 先読みサムネイル + 無限スクロール |
 | `GET /gallery/thumbs/<date>` | AJAX: 日付フォルダのサムネイル HTML フラグメントを返す |
 | `GET /gallery/search?q=` | 全日付横断ファイル名検索 |
 | `GET /gallery/<YYYY-MM-DD>` | 日付別ページ (個別アクセス用) |
-| `DELETE /delete-media` | メディアファイル削除 (パストラバーサル対策済み) |
+| `POST /delete-media` | メディアファイル削除 (パストラバーサル対策済み) 🔒 |
 | `GET /media/<path>` | `send_from_directory` によるメディア配信 |
 | `GET /logs` | 処理ログ (最新 100 件) |
 | `GET /failures` | 失敗リスト |
-| `POST /retry/<message_id>/<channel_id>` | リトライキューへ追加 |
-| `GET /api/health` | サーバー疎通確認 (Chrome 拡張 / Android アプリ用) |
-| `POST /api/queue` | URL を直接ダウンロードキューに追加。`{"url": "..."}` または `{"urls": [...]}` |
-| `GET /api/queue/status` | 現在の処理待ちキュー一覧を返す (Chrome 拡張 / Android アプリ用) |
-| `DELETE /api/queue/item` | 処理待ちキューから指定 URL の 1 件を削除。`{"url": "..."}` |
-| `POST /api/queue/clear` | 処理待ちキューを全件削除 |
-| `GET /api/logs/recent` | 最近の処理ログ (最新 5 件) を返す |
-| `GET /api/history/export` | ダウンロード済み tweet ID を TMH 互換フォーマットで返す |
-| `POST /api/history/import` | TMH 互換フォーマットの tweet ID をインポートし重複防止リストに追加 |
-| `GET /api/history/count` | ダウンロード済み tweet ID の総件数を返す `{"count": N}` |
-| `GET /api/history/ids` | ダウンロード済み tweet ID の全リストを返す (Chrome 拡張バッジ用) |
-| `GET /api/history/urls/count` | ダウンロード済み URL (Pixiv/Imgur 等) の総件数を返す `{"count": N}` |
-| `GET /api/history/urls` | ダウンロード済み URL の全リストを返す (Chrome 拡張バッジ用) |
-| `GET /api/stats` | ストレージ統計 (ファイル数・サイズ・日別・拡張子別) を返す |
 | `GET /stats` | ストレージ統計ダッシュボード (Chart.js) |
 | `GET /queue` | API キューの管理ページ (処理待ちキュー一覧・全件削除) |
+| `GET /api/health` | サーバー疎通確認 (`{"status": "ok", "version": "1.0"}`、認証不要) |
+| `POST /api/update` | gallery-dl / yt-dlp を更新 |
+| `GET /api/stats` | ストレージ統計 (`total_*` / `files_per_day` / `by_ext`) |
+| `POST /api/queue` | URL をキューに追加。`{"url": "..."}` または `{"urls": [...]}` → 202 `{"queued", "accepted", "rejected"}` |
+| `GET /api/queue/status` | キュー一覧 (素の配列、既定は待機/実行中のみ、`include_finished=1` で全件) |
+| `DELETE /api/queue/item` | 指定 URL の 1 件を削除。`{"url": "..."}` |
+| `POST /api/queue/clear` | 待機/実行中のキューを全件削除 `{"deleted": N}` |
+| `GET /api/logs/recent` | 最近の処理ログ (既定 5 件) |
+| `GET /api/history/count` | ダウンロード済み tweet ID の総件数 `{"count": N}` |
+| `GET /api/history/ids` | ダウンロード済み tweet ID の全リスト (素の配列) |
+| `GET /api/history/urls/count` | ダウンロード済み URL の総件数 `{"count": N}` |
+| `GET /api/history/urls` | ダウンロード済み URL の全リスト (素の配列) |
+| `GET /api/history/export` | TMH 互換 JSON (`{version, exportedAt, records}`) |
+| `POST /api/history/import` | TMH 互換 JSON のインポート → `{"imported": N}` |
+| `GET /api/history/stream` | SSE で完了イベントを配信 (ヘッダ認証必須なのでクライアントは fetch ポーリング推奨) |
+| `DELETE /api/downloaded/id/<tweet_id>` | ダウンロード済みフラグの削除 |
+| `DELETE /api/downloaded/url` | URL フラグの削除 `{"url": "..."}` |
+| `GET|DELETE /api/downloaded/orphans` | 孤立フラグの一覧/全削除 |
+| `GET /api/storage/consistency` | DB と実ファイルの整合性サマリ |
+| `GET /api/storage/orphans` | 孤立フラグ + 孤立ファイル |
+| `POST /api/storage/reindex` | 実ファイル名から tweet ID を再登録 |
+| `GET /api/gallery/search` | ギャラリー検索 API (q / media_type / date / limit) |
+| `GET /api/gallery/calendar` | 日別件数カレンダー API (year / month) |
+
+🔒 = `API_TOKEN` 設定時に認証必須
 
 **ギャラリー** (`/gallery`):
 - `GALLERY_THUMB_COUNT` (デフォルト50) 件に達するまでの日付を先読み表示 (サーバーサイドレンダリング)

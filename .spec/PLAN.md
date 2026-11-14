@@ -7,14 +7,15 @@ x-keeper の今後の機能拡張計画。優先度・依存関係を記載。
 **ステータス**: 実装中
 
 ### 完了済み
-- Discord Bot: X/Pixiv/Imgur URL 自動検出・ダウンロード
 - Flask Web UI: ギャラリー・ログ・失敗管理
 - Chrome 拡張: オフラインキュー・オンライン投入
 - Flutter Android アプリ: 共有インテント対応
+- Discord 統合完全削除 (API キュー単一化)
+- SQLite 永続キュー（クラッシュ回復・自動リトライ）
+- 簡易トークン認証 (`API_TOKEN`) + Webhook 通知
 - Docker: 自動ビルド・デプロイ
 
 ### 実装中
-- [ ] Discord 統合完全削除 (API キュー単一化)
 - [ ] 自動アップデート機能（Docker + GitHub Releases）
 - [ ] バグ修正（メモリリーク・edge case）
 

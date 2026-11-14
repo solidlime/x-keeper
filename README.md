@@ -372,10 +372,28 @@ APK ファイルを Android デバイスにコピーして、ファイルマネ�
 
 API キューに積まれた未処理 URL の一覧。
 
+キューは SQLite (`{SAVE_PATH}/xkeeper.db`) に永続化される。サーバー再起動時に処理中だったジョブは `pending` に戻され、再処理される。失敗ジョブは60秒/300秒/900秒後で最大3回までリトライ。
+
 **操作:**
 - **再ダウンロード**: URL をキューの末尾に再追加
 - **削除**: 特定の URL をキューから削除
 - **全クリア**: キュー全体をクリア
+
+### API 認証
+
+`.env` の `API_TOKEN` を設定すると `/api/*` が保護される（未設定なら認証なしで従来どおり動く）。
+
+| 項目 | 仕様 |
+|---|---|
+| 対象 | `/api/*`（`/api/health` と OPTIONS プリフライトを除く） |
+| 対象外 | `/gallery`, `/media/*`, `/logs`, `/stats`, `/queue`, `/thumb/*`（Web UI・メディア配信） |
+| 設定変更系 | `/save-*`, `/pixiv-oauth/*`, `/delete-media` も保護。トークン設定済みなら認証必須 |
+| ヘッダ | `X-API-Token: <token>` または `Authorization: Bearer <token>` |
+| ブラウザ | セットアップ画面でトークンを保存するとセッション認証される（再起動しても維持） |
+| 401 | `{"error": "unauthorized"}` を JSON で返す（拡張・Android はこれでトークン不一致を判定） |
+
+トークンの生成・表示・コピー・無効化はセットアップ画面（`/?setup=1`）の「API トークン」欄で行う。
+既にトークンが設定されている状態で別のトークンに書き換えるには認証が必要（同じトークンを保存し直すとログイン扱い）。
 
 ### API エンドポイント (主要なもの)
 
@@ -386,10 +404,14 @@ GET /api/stats
 レスポンス:
 ```json
 {
+  "total_success": 1000,
+  "total_failure": 3,
+  "total_downloaded_ids": 800,
+  "total_downloaded_urls": 12,
   "total_files": 1234,
   "total_size_bytes": 5678901234,
-  "by_date": {"2026-03-08": 42, "2026-03-07": 17},
-  "by_ext": {"jpg": 800, "mp4": 300, "png": 134}
+  "files_per_day": [{"date": "2026-03-08", "count": 42, "size_bytes": 123456}],
+  "by_ext": {".jpg": 800, ".mp4": 300, ".png": 134}
 }
 ```
 
@@ -397,7 +419,7 @@ GET /api/stats
 ```
 GET /api/health
 ```
-レスポンス: `{"status": "ok"}`
+レスポンス: `{"status": "ok", "version": "1.0"}`（認証不要）
 
 #### URL をキューに追加
 ```
@@ -419,21 +441,34 @@ Content-Type: application/json
 }
 ```
 
+レスポンス (202): `{"queued": true, "accepted": [...], "rejected": [...]}`。
+非対応 URL のみの場合は 400 `{"error": "no supported URLs", "rejected": [...]}`。
+同一 URL の再投入は、終了済み（`done`/`failed`）なら `pending` に戻り、待機/実行中なら追加されない。
+
 #### キュー一覧を取得
 ```
 GET /api/queue/status
 ```
-レスポンス:
+クエリ: `status=pending,running,done,failed` / `include_finished=1` / `q` / `limit`
+
+レスポンス (素の配列):
 ```json
-{
-  "queue": [
-    {
-      "url": "https://x.com/xxx/status/12345",
-      "added_at": "2026-03-08T10:30:00"
-    }
-  ]
-}
+[
+  {
+    "url": "https://x.com/xxx/status/12345",
+    "queued_at": "2026-03-08 10:30:00",
+    "status": "pending",
+    "retry_count": 0,
+    "last_error": null,
+    "next_retry_at": null,
+    "source": "chrome_ext",
+    "started_at": null,
+    "finished_at": null,
+    "updated_at": "2026-03-08 10:30:00"
+  }
+]
 ```
+既定では `pending` / `running` / `processing` のみ返す。
 
 #### キューから 1 件削除
 ```
@@ -449,11 +484,19 @@ Content-Type: application/json
 ```
 POST /api/queue/clear
 ```
+レスポンス: `{"deleted": 3}`（待機/実行中のみ削除。終了済み履歴は残る）
+
+#### gallery-dl / yt-dlp を更新
+```
+POST /api/update
+```
+レスポンス: `{"ok": true, "versions": {"gallery_dl": "...", "yt_dlp": "..."}, "output": "..."}`
 
 #### 最近のログ (最新 5 件)
 ```
 GET /api/logs/recent
 ```
+クエリ: `limit` / `status` / `q` / `since` / `until`
 
 #### ダウンロード済み tweet ID の件数
 ```
@@ -465,7 +508,7 @@ GET /api/history/count
 ```
 GET /api/history/ids
 ```
-レスポンス: `{"ids": ["123456789", "987654321", ...]}`
+レスポンス (素の配列): `["123456789", "987654321", ...]`
 
 #### ダウンロード済み URL の件数 (Pixiv / Imgur など)
 ```
@@ -476,28 +519,48 @@ GET /api/history/urls/count
 ```
 GET /api/history/urls
 ```
+クエリ: `q` / `domain`。レスポンス (素の配列)。
 
 #### ダウンロード履歴をエクスポート (TMH 互換形式)
 ```
 GET /api/history/export
 ```
-テキストファイルで tweet ID を 1 行ずつダウンロード。
+レスポンス (JSON): `{"version": 1, "exportedAt": "...", "records": [{"tweetId": "123", "downloadedAt": null}]}`
 
 #### ダウンロード履歴をインポート (TMH 互換形式)
 ```
 POST /api/history/import
-Content-Type: text/plain
+Content-Type: application/json
 
-123456789
-987654321
-...
+{"records": [{"tweetId": "123456789"}]}
 ```
+`["123456789", ...]` のような素の ID 配列、`{"data": [...]}` / `{"items": [...]}` も受け付ける。
+レスポンス: `{"imported": 3}`（新規追加された件数）
 
 #### リアルタイム更新ストリーム (SSE)
 ```
 GET /api/history/stream
 ```
-Server-Sent Events でダウンロード完了をリアルタイム配信。
+Server-Sent Events でダウンロード完了をリアルタイム配信（`snapshot` / `update` イベント）。
+トークン設定時はヘッダ認証が必要なので、ヘッダを付けられない `EventSource` ではなく `fetch` ポーリング（`/api/history/ids`）を使うこと。
+
+#### ダウンロード済みフラグの削除・整合性
+```
+DELETE /api/downloaded/id/<tweet_id>
+DELETE /api/downloaded/url            {"url": "..."}
+GET    /api/downloaded/orphans        孤立フラグ一覧
+DELETE /api/downloaded/orphans        孤立フラグを全削除
+
+GET    /api/storage/consistency       DB と実ファイルの整合性サマリ
+GET    /api/storage/orphans           孤立フラグ + 孤立ファイル
+POST   /api/storage/reindex           実ファイル名から tweet ID を再登録
+```
+
+#### ギャラリー検索 (Web UI 用)
+```
+GET /api/gallery/search?q=&media_type=image|video|audio|other&date=YYYY-MM-DD&limit=200
+GET /api/gallery/calendar?year=2026&month=3
+```
 
 ---
 
@@ -514,6 +577,8 @@ Server-Sent Events でダウンロード完了をリアルタイム配信。
 | `RETRY_POLL_INTERVAL` | — | `30` | API キューをポーリングする秒数。短いほど応答性が上がるがリソース増加 |
 | `GALLERY_THUMB_COUNT` | — | `50` | ギャラリートップで先読みするサムネイル数。多いほど初期読み込み時間が増加 |
 | `LOG_LEVEL` | — | `INFO` | ログレベル (`DEBUG` / `INFO` / `WARNING` / `ERROR`) |
+| `API_TOKEN` | — | — | API トークン。設定すると `/api/*` と設定変更系ルートが保護される（[API 認証](#api-認証)） |
+| `NOTIFY_WEBHOOK_URL` | — | — | ダウンロード完了/失敗時に JSON を POST する Webhook URL |
 
 ### .env ファイル例
 
@@ -538,6 +603,12 @@ GALLERY_THUMB_COUNT=50
 
 # ログレベル
 LOG_LEVEL=INFO
+
+# API トークン (設定すると /api/* が保護される。セットアップ画面から生成可能)
+API_TOKEN=
+
+# 通知 Webhook (任意)
+NOTIFY_WEBHOOK_URL=
 ```
 
 ### Cookie ファイルの取得方法 (鍵垢対応)
