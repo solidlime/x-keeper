@@ -18,6 +18,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import 'queue_store.dart';
 import 'server_client.dart';
+import 'url_utils.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -75,7 +76,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _client = ServerClient(widget.store.serverUrl);
+    _client = ServerClient(widget.store.serverUrl, widget.store.apiToken);
 
     // アプリ起動後: 疎通確認 + オフラインキューのフラッシュ
     _checkAndFlush();
@@ -95,10 +96,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   // フォアグラウンド復帰時に接続状態・ログを更新する
+  // ShareActivity がネイティブ側でキュー/設定を書き換えるため prefs を読み直す
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _checkAndFlush();
+      _checkAndFlush(reloadStore: true);
     }
   }
 
@@ -107,15 +109,18 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Future<void> _handleSharedMedia(List<SharedMediaFile> files) async {
     if (files.isEmpty) return;
 
-    // テキスト共有から URL を抽出する
-    final urls = files
+    // 共有テキスト (または URL) から対応 URL を抽出する
+    final text = files
         .where((f) => f.type == SharedMediaType.text || f.type == SharedMediaType.url)
-        .map((f) => f.path.trim())
-        .where(_isSupportedUrl)
-        .toList();
+        .map((f) => f.path)
+        .join('\n');
+    final urls = extractSupportedUrls(text);
 
     if (urls.isEmpty) {
-      _setMessage('対応していない URL です');
+      final reason = extractUrls(text).isEmpty
+          ? 'URL が見つかりません'
+          : '対応していない URL です (X/Pixiv/Imgur/YouTube/TikTok/ニコニコ)';
+      _setMessage(reason);
       await SystemNavigator.pop();
       return;
     }
@@ -131,22 +136,33 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Future<void> _sendUrls(List<String> urls) async {
     try {
       final result = await _client.queueUrls(urls);
+      final msg = '送信完了: ${result.accepted.length} 件'
+          '${result.rejected.isEmpty ? '' : ' / 拒否 ${result.rejected.length} 件'}';
+      await widget.store.setLastResult('${_stamp()} $msg');
       setState(() {
         _serverOnline = true;
-        _lastMessage = '送信完了: ${result.accepted.length} 件';
+        _lastMessage = msg;
       });
       // 送信成功時にオフラインキューもフラッシュ
       await _flushQueue();
-    } catch (_) {
+    } catch (e) {
       // サーバー未接続 → オフラインキューに保存
       for (final url in urls) {
         await widget.store.enqueue(url);
       }
+      final msg = '未接続。${urls.length} 件をキューに保存しました';
+      await widget.store.setLastResult('${_stamp()} $msg ($e)');
       setState(() {
         _serverOnline = false;
-        _lastMessage = '未接続。${urls.length} 件をキューに保存しました';
+        _lastMessage = msg;
       });
     }
+  }
+
+  String _stamp() {
+    final n = DateTime.now();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${two(n.month)}-${two(n.day)} ${two(n.hour)}:${two(n.minute)}';
   }
 
   Future<void> _flushQueue() async {
@@ -166,10 +182,14 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _checkAndFlush() async {
-    final online = await _client.health();
-    setState(() => _serverOnline = online);
-    if (online) {
+  Future<void> _checkAndFlush({bool reloadStore = false}) async {
+    if (reloadStore) await widget.store.reload();
+    final health = await _client.health();
+    if (mounted) setState(() => _serverOnline = health.ok);
+    if (!health.ok && health.message.isNotEmpty) {
+      if (mounted) setState(() => _lastMessage = health.message);
+    }
+    if (health.ok) {
       await _flushQueue();
       // オンライン時のみサーバー状態を取得する
       await Future.wait([_fetchApiQueue(), _fetchRecentLogs()]);
@@ -240,12 +260,25 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
             if (_lastMessage.isNotEmpty) const SizedBox(height: 16),
 
+            // 直近の共有送信結果 (ShareActivity / アプリ内共有の両方が記録)
+            if (widget.store.lastResult.isNotEmpty) ...[
+              Card(
+                child: ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.history_toggle_off, size: 20),
+                  title: const Text('直近の共有', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  subtitle: Text(widget.store.lastResult, style: const TextStyle(fontSize: 12)),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
             // オフラインキュー
             if (q.isNotEmpty) ...[
               _QueueCard(
                 queue: q,
                 onFlush: () async {
-                  await _checkAndFlush();
+                  await _checkAndFlush(reloadStore: true);
                   _setMessage(_serverOnline ? 'オフラインキューを送信しました' : 'サーバー未接続');
                 },
                 onClear: () async {
@@ -288,15 +321,16 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       MaterialPageRoute(builder: (_) => SettingsPage(store: widget.store)),
     );
     if (updated == true) {
-      // サーバー URL が変わったので再接続
-      setState(() => _client = ServerClient(widget.store.serverUrl));
+      // サーバー URL / トークンが変わったので再接続
+      setState(() =>
+          _client = ServerClient(widget.store.serverUrl, widget.store.apiToken));
       await _checkAndFlush();
     }
   }
 
   void _openGallery() {
     final serverUrl = widget.store.serverUrl;
-    if (serverUrl.isEmpty) {
+    if (!_client.hasServer) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('先にサーバー URL を設定してください')),
       );
@@ -324,29 +358,49 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   late final TextEditingController _urlCtrl;
-  bool? _testResult;
+  late final TextEditingController _tokenCtrl;
+  HealthResult? _testResult;
   bool _testing = false;
+  String? _validationError;
 
   @override
   void initState() {
     super.initState();
     _urlCtrl = TextEditingController(text: widget.store.serverUrl);
+    _tokenCtrl = TextEditingController(text: widget.store.apiToken);
   }
 
   @override
   void dispose() {
     _urlCtrl.dispose();
+    _tokenCtrl.dispose();
     super.dispose();
   }
 
+  /// 入力中の値で疺通確認する (未保存でも試せる)
   Future<void> _testConnection() async {
-    setState(() { _testing = true; _testResult = null; });
-    final ok = await ServerClient(_urlCtrl.text.trim()).health();
-    setState(() { _testing = false; _testResult = ok; });
+    final url = normalizeServerUrl(_urlCtrl.text);
+    if (url.isEmpty) {
+      setState(() => _validationError = 'URL が不正です (http:// か https:// で始まるホスト名) ');
+      return;
+    }
+    setState(() {
+      _testing = true;
+      _testResult = null;
+      _validationError = null;
+    });
+    final result = await ServerClient(url, _tokenCtrl.text).health();
+    if (mounted) setState(() { _testing = false; _testResult = result; });
   }
 
   Future<void> _save() async {
-    await widget.store.setServerUrl(_urlCtrl.text.trim());
+    final url = normalizeServerUrl(_urlCtrl.text);
+    if (url.isEmpty) {
+      setState(() => _validationError = 'URL が不正です (http:// か https:// で始まるホスト名) ');
+      return;
+    }
+    await widget.store.setServerUrl(url);
+    await widget.store.setApiToken(_tokenCtrl.text);
     if (mounted) Navigator.pop(context, true);
   }
 
@@ -360,7 +414,8 @@ class _SettingsPageState extends State<SettingsPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Text(
-              'x-keeper サーバーの URL を入力してください。',
+              'x-keeper サーバーの URL と API トークンを入力してください。\n'
+              '設定は端末に保存され、共有メニューからの送信でも使われます。',
               style: TextStyle(fontSize: 14),
             ),
             const SizedBox(height: 16),
@@ -371,11 +426,30 @@ class _SettingsPageState extends State<SettingsPage> {
               decoration: const InputDecoration(
                 labelText: 'サーバー URL',
                 hintText: 'http://192.168.1.10:8989',
+                helperText: 'http:// / https:// のみ。末尾スラッシュは自動除去',
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.dns_outlined),
               ),
             ),
             const SizedBox(height: 12),
+            TextField(
+              controller: _tokenCtrl,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: const InputDecoration(
+                labelText: 'API トークン (任意)',
+                hintText: 'サーバーの API_TOKEN と同じ値',
+                helperText: 'サーバーで API_TOKEN 未設定なら空のままで OK',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.key_outlined),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            if (_validationError != null) ...[
+              Text(_validationError!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+              const SizedBox(height: 8),
+            ],
 
             // 接続テストボタン
             OutlinedButton.icon(
@@ -389,16 +463,22 @@ class _SettingsPageState extends State<SettingsPage> {
             if (_testResult != null) ...[
               const SizedBox(height: 8),
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Icon(
-                    _testResult! ? Icons.check_circle : Icons.error_outline,
-                    color: _testResult! ? Colors.green : Colors.red,
+                    _testResult!.ok ? Icons.check_circle : Icons.error_outline,
+                    color: _testResult!.ok ? Colors.green : Colors.red,
                     size: 18,
                   ),
                   const SizedBox(width: 6),
-                  Text(
-                    _testResult! ? '接続成功 ✓' : '接続できませんでした',
-                    style: TextStyle(color: _testResult! ? Colors.green : Colors.red),
+                  Expanded(
+                    child: Text(
+                      _testResult!.ok ? '接続成功 ✓' : _testResult!.message,
+                      style: TextStyle(
+                        color: _testResult!.ok ? Colors.green : Colors.red,
+                        fontSize: 12,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -415,7 +495,7 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: 20),
             const Divider(),
             const SizedBox(height: 12),
-            _HistoryCard(serverUrl: widget.store.serverUrl),
+            _HistoryCard(serverUrl: widget.store.serverUrl, apiToken: widget.store.apiToken),
           ],
         ),
       ),
@@ -700,18 +780,15 @@ class _RecentLogsCard extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// URL バリデーション
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ─────────────────────────────────────────────────────────────────────────────
 // 履歴カード (設定画面下部)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// サーバーのダウンロード済み tweet ID 件数の確認・export/import を行うカード。
 class _HistoryCard extends StatefulWidget {
-  const _HistoryCard({required this.serverUrl});
+  const _HistoryCard({required this.serverUrl, required this.apiToken});
 
   final String serverUrl;
+  final String apiToken;
 
   @override
   State<_HistoryCard> createState() => _HistoryCardState();
@@ -726,7 +803,7 @@ class _HistoryCardState extends State<_HistoryCard> {
   @override
   void initState() {
     super.initState();
-    _client = ServerClient(widget.serverUrl);
+    _client = ServerClient(widget.serverUrl, widget.apiToken);
     if (widget.serverUrl.isNotEmpty) {
       _fetchCount();
     } else {
@@ -894,20 +971,5 @@ class _GalleryPageState extends State<GalleryPage> {
       ),
     );
   }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// URL バリデーション
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// X/Pixiv/Imgur の URL かどうか判定する
-bool _isSupportedUrl(String url) {
-  return RegExp(
-    r'^https?://(?:'
-    r'(?:twitter\.com|x\.com)/[A-Za-z0-9_]+/(?:status/\d+|media)'
-    r'|(?:www\.)?pixiv\.net/(?:en/)?artworks/\d+'
-    r'|(?:i\.)?imgur\.com/.+'
-    r')',
-  ).hasMatch(url);
 }
 

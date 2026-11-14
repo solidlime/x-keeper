@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  サーバー URL はユーザーが任意に指定する (tailnet 内の http://100.x.x.x:5000 等)。
+  ホストを事前に列挙できないため base-config で平文通信を許可している。
+  https 運用に固定できるようになったら、ここを
+  cleartextTrafficPermitted="false" + domain-config のホワイトリストへ絞ること。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+</network-security-config>

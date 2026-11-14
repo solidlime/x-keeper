@@ -1,30 +1,32 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xkeeper_client/main.dart';
+import 'package:xkeeper_client/queue_store.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('起動時に接続状態カードと設定ボタンが表示される', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
+    await tester.pumpWidget(XKeeperApp(store: QueueStore(prefs)));
     await tester.pump();
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.text('x-keeper'), findsOneWidget);
+    expect(find.byIcon(Icons.settings_outlined), findsOneWidget);
+    expect(find.text('未接続'), findsOneWidget);
+    expect(find.text('http://localhost:8989'), findsOneWidget);
+  });
+
+  testWidgets('API トークンが空なら認証ヘッダを送らない設定になる', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'xkeeper_server_url': 'http://host:5000/',
+      'xkeeper_api_token': '',
+    });
+    final prefs = await SharedPreferences.getInstance();
+    final store = QueueStore(prefs);
+
+    expect(store.serverUrl, 'http://host:5000');
+    expect(store.apiToken, '');
   });
 }
