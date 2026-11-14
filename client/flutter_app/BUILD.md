@@ -43,9 +43,21 @@ adb install build/app/outputs/flutter-apk/app-release.apk
 ## 設定
 
 1. アプリを起動する
-2. 右上の歯車アイコン → サーバー URL を設定
-   - 例: `http://192.168.1.10:8989`
-3. 「接続テスト」で疎通確認
+2. 右上の歯車アイコン → サーバー URL と API トークンを設定
+   - サーバー URL 例: `http://192.168.1.10:8989` / `https://host.tailnet.ts.net`
+   - `http://` / `https://` のみ。末尾スラッシュは自動除去、スキーム省略時は `http://` を補完
+   - API トークン: サーバーの `API_TOKEN` と同じ値 (未設定のサーバーなら空のままで OK)
+3. 「接続テスト」で疎通確認 (401 ならトークン不一致)
+
+設定は SharedPreferences (`FlutterSharedPreferences` の `flutter.` 付きキー) に保存され、
+共有メニューから起動する `ShareActivity` も同じ値を読む。
+
+| キー | 用途 |
+|------|------|
+| `flutter.xkeeper_server_url` | サーバー URL |
+| `flutter.xkeeper_api_token` | API トークン（空ならヘッダを付与しない） |
+| `flutter.xkeeper_offline_queue` | 未送信 URL の JSON 配列 |
+| `flutter.xkeeper_last_result` | 直近の共有送信結果 |
 
 ## 使い方
 
