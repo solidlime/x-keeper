@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="x-keeper">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#1d2f52"/>
+      <stop offset="1" stop-color="#0a111e"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="128" height="128" rx="28" fill="url(#bg)"/>
+
+  <!-- kept media: thumbnails lined up like a shelf -->
+  <rect x="26" y="84" width="20" height="20" rx="5" fill="#38bdf8" opacity=".95"/>
+  <rect x="54" y="84" width="20" height="20" rx="5" fill="#7dd3fc" opacity=".7"/>
+  <rect x="82" y="84" width="20" height="20" rx="5" fill="#38bdf8" opacity=".4"/>
+
+  <!-- incoming media -->
+  <path d="M64 20v42M64 78 86 56M64 78 42 56"
+        fill="none" stroke="#e8f3ff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
