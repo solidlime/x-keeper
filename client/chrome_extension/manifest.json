@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "x-keeper Client",
-  "version": "1.4.0",
+  "version": "1.5.1",
   "description": "X / Pixiv / Imgur / YouTube / TikTok / NicoNico のメディアを x-keeper サーバーに送信してダウンロードする",
 
   "permissions": [

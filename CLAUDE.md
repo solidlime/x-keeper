@@ -191,11 +191,11 @@ URL の投入元は Chrome 拡張・Android アプリ（`POST /api/queue`）と 
 | パス | 説明 |
 |---|---|
 | `client/chrome_extension/` | Chrome 拡張機能 (Manifest V3) |
-| `client/chrome_extension/manifest.json` | 拡張マニフェスト。host_permissions: `<all_urls>` |
+| `client/chrome_extension/manifest.json` | 拡張マニフェスト。host_permissions: `http://*/*` `https://*/*` (任意のサーバー URL に対応するため) |
 | `client/chrome_extension/background/service_worker.js` | オフラインキュー管理・HTTP 通信・SPA ナビゲーション検知 |
 | `client/chrome_extension/content_scripts/content.js` | X/Pixiv へのボタン注入 |
 | `client/chrome_extension/popup/` | ポップアップ UI (サーバーURL設定・キュー表示・履歴 export/import) |
-| `client/chrome_extension/icons/` | アイコン PNG (16/48/128px) + 生成スクリプト `make_icons.py` |
+| `client/chrome_extension/icons/` | アイコン PNG (16/48/128px)。原本は `assets/icon.svg` と `assets/icon-small.svg` |
 | `client/flutter_app/` | Android APK (Flutter)。共有インテントで URL を受け取りサーバーに投入 |
 | `client/flutter_app/build_apk.bat` | APK ビルド用 Windows バッチ |
 | `client/xkeeper.user.js` | Tampermonkey スクリプト (非推奨。Chrome 拡張に移行) |

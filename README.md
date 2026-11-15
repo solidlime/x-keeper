@@ -117,7 +117,7 @@ SAVE_PATH=/mnt/media/x-keeper python -m src.main
 
 ### Chrome 拡張
 
-`client/chrome_extension/` が Manifest V3 の拡張で、いまのバージョンは 1.4.0。ポップアップに URL を貼るか、ページを右クリックすれば、その URL がサーバーのキューに入る。
+`client/chrome_extension/` が Manifest V3 の拡張で、いまのバージョンは 1.5.1。ポップアップに URL を貼るか、ページを右クリックすれば、その URL がサーバーのキューに入る。
 
 配布用の ZIP は [GitHub Releases](https://github.com/solidlime/x-keeper/releases) の Assets に `x-keeper-chrome-ext.zip` として置いてある。解凍してから `chrome://extensions` を開き、右上の「デベロッパー モード」を入れて「パッケージ化されていない拡張機能を読み込む」で解凍先を選ぶ。ソースから動かすなら `client/chrome_extension/` をそのまま選べばいい。
 
